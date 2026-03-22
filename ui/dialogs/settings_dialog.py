@@ -100,33 +100,6 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings - Categories & Budgets")
         self.resize(800, 500)
         self.setStyleSheet("""
-            QDialog { background-color: #1c1c1e; color: #ffffff; }
-            QLabel { color: #ffffff; font-family: "Inter", "Segoe UI", sans-serif; font-size: 14px;}
-            QPushButton {
-                background-color: #2c2c2e; color: #ffffff; border: 1px solid #3a3a3c;
-                padding: 8px 16px; border-radius: 6px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #3a3a3c; }
-            QPushButton#primary { background-color: #0a84ff; border: none; }
-            QPushButton#primary:hover { background-color: #0070e0; }
-            QPushButton#danger { background-color: #ff453a; border: none; }
-            QPushButton#danger:hover { background-color: #d70015; }
-            QTableWidget {
-                background-color: #0f0f11; color: #ffffff;
-                gridline-color: #2c2c2e; border: 1px solid #2c2c2e;
-                border-radius: 8px; outline: 0;
-            }
-            QTableWidget::item { padding: 5px; }
-            QTableWidget::item:selected { background-color: #3a3a3c; color: white; }
-            QHeaderView::section {
-                background-color: #1c1c1e; color: #8e8e93; padding: 5px;
-                border: none; border-bottom: 1px solid #3a3a3c; font-weight: bold;
-            }
-            QLineEdit {
-                background-color: #2c2c2e; color: #ffffff; border: 1px solid #3a3a3c;
-                padding: 2px; border-radius: 2px;
-                selection-background-color: #0a84ff; selection-color: #ffffff;
-            }
             QLineEdit#TestSandbox {
                 padding: 8px; border-radius: 6px;
             }
@@ -170,7 +143,7 @@ class SettingsDialog(QDialog):
         
         # Test Sandbox
         sandbox_group = QGroupBox("Test Categorization Rule")
-        sandbox_group.setStyleSheet("QGroupBox { color: #8e8e93; font-weight: bold; border: 1px solid #2c2c2e; border-radius: 8px; margin-top: 10px; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }")
+        sandbox_group.setStyleSheet("QGroupBox { color: #A0A0A0; font-weight: bold; border: 1px solid #333333; border-radius: 8px; margin-top: 10px; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }")
         sandbox_layout = QHBoxLayout()
         self.txt_test = QLineEdit()
         self.txt_test.setObjectName("TestSandbox")

@@ -19,32 +19,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Bank Analyzer Dashboard")
         self.resize(1300, 900)
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #0f0f11;
-            }
-            QLabel {
-                color: #ffffff;
-                font-family: "Inter", "Segoe UI", sans-serif;
-            }
-            QPushButton {
-                background-color: #0a84ff;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                text-align: center;
-                font-weight: bold;
-                font-size: 14px;
-                border-radius: 8px;
-                font-family: "Inter", "Segoe UI", sans-serif;
-            }
-            QPushButton:hover {
-                background-color: #0070e0;
-            }
-            QPushButton:pressed {
-                background-color: #005bb5;
-            }
-        """)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -69,13 +43,11 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
 
         self.btn_settings = QPushButton("Settings")
-        self.btn_settings.setStyleSheet("background-color: #2c2c2e; color: #ffffff;")
         self.btn_settings.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_settings.clicked.connect(self.open_settings)
         top_bar.addWidget(self.btn_settings, alignment=Qt.AlignmentFlag.AlignVCenter)
         
         self.btn_export = QPushButton("Export Data")
-        self.btn_export.setStyleSheet("background-color: #2c2c2e; color: #ffffff;")
         self.btn_export.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_export.clicked.connect(self.export_data)
         top_bar.addWidget(self.btn_export, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -88,14 +60,12 @@ class MainWindow(QMainWindow):
         # Account Filter
         self.cb_account = QComboBox()
         self.cb_account.addItem("All Accounts")
-        self.cb_account.setStyleSheet("background-color: #2c2c2e; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-weight: bold;")
         self.cb_account.currentTextChanged.connect(self.on_filter_changed)
         top_bar.addWidget(self.cb_account, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # Date Filter
         self.cb_date = QComboBox()
         self.cb_date.addItems(["All Time", "This Month", "Last Month", "Year to Date"])
-        self.cb_date.setStyleSheet("background-color: #2c2c2e; color: #ffffff; padding: 5px 10px; border-radius: 4px; font-weight: bold;")
         self.cb_date.currentTextChanged.connect(self.on_filter_changed)
         top_bar.addWidget(self.cb_date, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -118,17 +88,6 @@ class MainWindow(QMainWindow):
         # Dock Manager (Internal QMainWindow)
         self.dock_manager = QMainWindow()
         self.dock_manager.setWindowFlags(Qt.WindowType.Widget)
-        self.dock_manager.setStyleSheet("""
-            QMainWindow { background-color: transparent; }
-            QDockWidget {
-                color: #ffffff; font-weight: bold; font-family: "Inter";
-                font-size: 13px;
-            }
-            QDockWidget::title {
-                background: #1c1c1e; padding: 6px; border-radius: 8px;
-                text-align: center;
-            }
-        """)
         
         self.dock_manager.setDockNestingEnabled(True)
         # Empty central widget for dock manager so it purely holds floating/docked widgets
@@ -139,7 +98,7 @@ class MainWindow(QMainWindow):
         
         # Pie Card
         self.pie_card = QFrame()
-        self.pie_card.setStyleSheet("background-color: #1c1c1e; border-radius: 12px; border: 1px solid #2c2c2e;")
+        self.pie_card.setObjectName("DashboardCard")
         pie_layout = QVBoxLayout(self.pie_card)
         pie_layout.setContentsMargins(10, 10, 10, 10)
         self.pie_canvas = MplCanvas(self, width=3, height=3, dpi=100)
@@ -147,7 +106,7 @@ class MainWindow(QMainWindow):
         
         # Bar Card
         self.bar_card = QFrame()
-        self.bar_card.setStyleSheet("background-color: #1c1c1e; border-radius: 12px; border: 1px solid #2c2c2e;")
+        self.bar_card.setObjectName("DashboardCard")
         bar_layout = QVBoxLayout(self.bar_card)
         bar_layout.setContentsMargins(10, 10, 10, 10)
         self.bar_canvas = MplCanvas(self, width=3, height=3, dpi=100)
@@ -155,7 +114,7 @@ class MainWindow(QMainWindow):
         
         # Budgets Card
         self.budget_card = QFrame()
-        self.budget_card.setStyleSheet("background-color: #1c1c1e; border-radius: 12px; border: 1px solid #2c2c2e;")
+        self.budget_card.setObjectName("DashboardCard")
         bc_layout = QVBoxLayout(self.budget_card)
         bc_layout.setContentsMargins(15, 15, 15, 15)
         self.budget_container = QWidget()
@@ -171,11 +130,6 @@ class MainWindow(QMainWindow):
 
         # Data Area (Tabs)
         self.data_tabs = QTabWidget()
-        self.data_tabs.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #2c2c2e; border-radius: 12px; background-color: #1c1c1e; }
-            QTabBar::tab { background: #0f0f11; color: #8e8e93; border: 1px solid #2c2c2e; padding: 10px 20px; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 2px; font-weight: bold; font-family: "Inter"; }
-            QTabBar::tab:selected { background: #1c1c1e; color: #ffffff; border-bottom-color: #1c1c1e; }
-        """)
 
         # Table Area
         self.table = QTableWidget()
@@ -186,12 +140,6 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.setStyleSheet("""
-            QTableWidget { background-color: #1c1c1e; color: #ffffff; border: none; outline: 0; font-size: 13px; }
-            QTableWidget::item { padding: 5px; border-bottom: 1px solid #2c2c2e; }
-            QTableWidget::item:selected { background-color: #2c2c2e; color: white; }
-            QHeaderView::section { background-color: #1c1c1e; color: #8e8e93; padding: 8px; border: none; border-bottom: 1px solid #3a3a3c; font-weight: bold; font-size: 12px; text-transform: uppercase; }
-        """)
         self.table.itemDoubleClicked.connect(self.on_transaction_double_clicked)
         self.data_tabs.addTab(self.table, "All Transactions")
         
@@ -201,12 +149,6 @@ class MainWindow(QMainWindow):
         self.tree_categories.setHeaderLabels(["Category / Date", "Description", "Amount"])
         self.tree_categories.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.tree_categories.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tree_categories.setStyleSheet("""
-            QTreeWidget { background-color: #1c1c1e; color: #ffffff; border: none; outline: 0; font-size: 13px; }
-            QTreeWidget::item { padding: 5px; border-bottom: 1px solid #2c2c2e; }
-            QTreeWidget::item:selected { background-color: #2c2c2e; }
-            QHeaderView::section { background-color: #1c1c1e; color: #8e8e93; padding: 8px; border: none; border-bottom: 1px solid #3a3a3c; font-weight: bold; font-size: 12px; text-transform: uppercase; }
-        """)
         self.tree_categories.itemDoubleClicked.connect(self.on_tree_double_clicked)
         self.data_tabs.addTab(self.tree_categories, "Category Breakdown")
         
@@ -314,11 +256,6 @@ class MainWindow(QMainWindow):
 
     def export_data(self):
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #1c1c1e; color: #ffffff; border: 1px solid #2c2c2e; }
-            QMenu::item { padding: 8px 20px; }
-            QMenu::item:selected { background-color: #2c2c2e; }
-        """)
         
         action_csv = QAction("Export to CSV", self)
         action_excel = QAction("Export to Excel", self)
