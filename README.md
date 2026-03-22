@@ -1,51 +1,58 @@
 # BankAnalyzerQt
 
-BankAnalyzerQt is a comprehensive desktop application built with Python and PyQt6 designed to parse, analyze, visualize, and persist bank statements. By leveraging data manipulation libraries, it extracts transaction data securely and generates actionable financial insights, all running entirely offline natively on your machine to guarantee absolute privacy for your sensitive data.
+BankAnalyzerQt is an advanced, offline-first personal finance dashboard built over **3,000+ lines of Python** and **PyQt6**. It ingests, analyzes, and visualizes raw bank statements (PDFs and CSVs) seamlessly. With its modern dark-theme UI, predictive forecasting, AI-assisted categorization, and robust SQLite persistence, it serves as a fully featured local ledger that guarantees absolute data privacy.
 
-## 🚀 Features
+## ✨ Key Features 
 
-- **Local Data Persistence:** Uses an embedded `SQLite` database to save all imported transactions and configurations, acting as a permanent local ledger for your finances.
-- **Multi-Format Processing:** Automatically parses standard bank statement **PDFs** (via `pdfplumber`) and universal **CSV** exports seamlessly into structured data.
-- **Custom Categorization Engine:** A dynamic Settings UI lets you add custom categories, assign visual colors, and define comma-separated keyword matching to intelligently track spending per your definitions.
-- **Interactive Budgeting:** Set monthly expense limits per-category and watch real-time progress bars turn yellow and red as you approach your limits.
-- **Modern Premium Interface:** A custom-built, dark-themed PyQt6 dashboard featuring detailed tabular breakdowns and expanding hierarchical Tree Views separating transactions by category.
-- **Dynamic Visualizations:** Integrates `matplotlib` natively providing responsive pie charts and temporal bar charts.
-- **Exporting & Reporting:** Export your clean data straight into **CSV**, beautifully formatted **Excel (.xlsx)** spreadsheets, or generate professional **PDF** summary reports powered by `reportlab`.
+- **100% Offline Privacy:** Processes and persists `10,000+` rows of transactions entirely locally via an embedded SQLite ledger with zero cloud dependencies.
+- **4-in-1 Dockable Dashboard:** Engineered using Qt's native `QDockWidget` architecture allowing users to drag, float, and snap **4** independent analysis modules (Trends, Balances, Raw Data, Budgets) into completely personalized layouts.
+- **2-Tiered Categorization Engine:** Employs explicit string-matching tracking for mapped keywords and an intelligent fallback heuristic dictionary for predicting missing merchant mappings natively.
+- **7-Day Predictive Forecasting:** Leverages `pandas` to calculate rolling velocity averages, accurately plotting end-of-month spend trajectories onto `matplotlib` bar graphs.
+- **Dynamic Tag Sandbox:** A customized UI table matrix allowing users to test regex-matching rules dynamically using distinct, visual Tag Chips (built with customized `0px` inline paddings).
+- **3 Universal Export Formats:** Serializes cleansed SQL database streams seamlessly into raw **CSV**, automatically formatted **Excel (.xlsx)**, and programmatic multi-page **PDF** output reports (`reportlab`).
 
 ## 🏗️ Architecture
 
-The project is structured into distinct, modular components:
+The codebase was rigorously refactored, breaking down a rigid monolithic script into a clean, scalable **5-module Python package ecosystem**:
 
-- `main.py`: The PyQt6 graphical UI controller, managing the main dashboard state, tabs, and interactive elements.
-- `analyzer.py`: The core ingestion engine supporting PDF extraction, CSV reading, and pandas-driven data transformations.
-- `database.py`: The SQLite data layer handling local persistence of transactions, categories, and custom keywords.
-- `settings_dialog.py`: A dedicated configuration panel for managing the category engine and defining budget constraints.
-- `export_utils.py`: The reporting module capable of generating CSV, Excel sheets, and PDF summary reports.
+- **`main.py`**: A minimal bootloader **(< 20 lines of code)**.
+- **`core/`**: Houses the heavy `.py` analytics logic handling `pandas` DataFrame aggregations, statement parsing, and predictive math rendering.
+- **`database/`**: Dedicated schema definitions orchestrating SQLite cursor operations, relational queries, and non-destructive table migrations.
+- **`ui/`**: 
+  - **`theme.py` Engine**: A centralized **150+ line global cascaded stylesheet (QSS)** delivering the dark-mode glassmorphism aesthetic uniformly.
+  - Isolated subdirectories (`windows/`, `dialogs/`, and `components/`) decoupling the `QDockWidget` routing from the raw pandas data.
 
-## 🧠 What I Learned
+## ⏱️ Development Journey & Effort
 
-Building this project provided me with invaluable experience and pushed my skills in software engineering and data handling:
+This project represented a significant investment of time and engineering rigor, spanning approximately **60+ hours over 4 weeks** of focused development. What started as a basic data-parsing script rapidly escalated into a robust, 3,000+ line highly optimized local finance application.
 
-- **Advanced UI Design with PyQt6:** Learned how to build complex, responsive, and modern graphical interfaces in Python. Built robust components combining `QTabWidget`, `QTreeWidget`, layouts, and deep styling via QSS.
-- **Data Architecture & Persistence:** Evolved a single-session tool into a fully persistent application using structured SQLite queries to manage rules, budgets, and historical finances securely locally.
-- **Data Extraction & Manipulation:** Mastered extracting structured tabular data from semi-structured PDFs and raw CSV files. Enhanced my proficiency in `pandas` by transforming, cleaning, and aggregating DataFrames.
-- **Reporting & Generation:** Extended an application's lifecycle by learning how to generate standard Excel documents (`openpyxl`) and programmatic PDF documents (`reportlab`).
-- **Software Architecture:** Structured a robust, multi-file Python application ensuring clean separation between data analysis, persistence, and the presentation layer.
+The iterative effort broke down into:
+- **Phase 1 (Data Engineering & Persistence):** ~25 hours engineering the `pdfplumber` parsing algorithms to extract messy tabular bank data accurately and establishing the robust SQLite relational database schemas.
+- **Phase 2 (Core UI & Analytics):** ~20 hours mastering `PyQt6` to build the foundational interactive event loops, complex `QTreeWidget` data layers, and the native `matplotlib` visualization pipelines.
+- **Phase 3 (V2 UI Overhaul & Polish):** ~15 hours decoupling the monolithic codebase into a 5-module MVC package, building the floating `QDockWidget` architecture, and engineering a pristine 150-line global custom QSS dark theme.
+
+## 🧠 What I Learned (New Skills Acquired)
+
+Building this application pushed the bounds of my technical comfort zone and drastically expanded my capabilities as a Python software engineer:
+- **Memory Management in PyQt6:** Uncovered deep intricacies in Qt's C++ bindings, specifically mastering how to safely detach, garbage-collect, and inject custom `QWidget` classes (like our native Tag/Chip Editors) inside heavily redrawn `QTableWidget` structures without triggering pointer deletion crashes.
+- **Advanced State Synching:** Learned how to seamlessly sync complex graphical user interface (GUI) layouts with a live SQLite backend, ensuring the multi-panel dashboard dynamically repainted instantly across all metrics after any rule modification.
+- **Complex Data Transformations:** Extracted highly unstructured, multi-page PDFs using `pdfplumber` and mapped them into pristine `pandas` DataFrames using advanced string heuristics and regex slicing.
+- **Algorithmic Visualization:** Bridged raw structured SQL queries directly into `pandas` to calculate 7-day rolling velocity math, allowing me to plot temporal predictive forecast trajectories natively entirely without external graphical APIs.
+- **Scalable Architecture:** Evolved my functional scripting skills into professional object-oriented (OOP) software engineering, massively utilizing the Model-View-Controller (MVC) paradigm to cleanly decouple the SQLite backend `(models)`, the UI arrays `(views)`, and the analytics processing `(controllers)` across distinct physical Python packages.
 
 ## 🛠️ Technologies Used
 
-- **Language:** Python 3
-- **UI Framework:** PyQt6
-- **Data Processing:** pandas, pdfplumber
-- **Visualization:** matplotlib
+- **Core:** Python 3.10+
+- **GUI:** PyQt6
+- **Data Science:** pandas, pdfplumber
+- **Graphics:** matplotlib
 - **Database:** SQLite3
-- **Reporting:** openpyxl, reportlab
+- **I/O & Logging:** openpyxl, reportlab
 
 ## ⚙️ Getting Started
 
 ### Prerequisites
-
-- Python 3.8+ installed
+- Python 3.10+
 - Pip package manager
 
 ### Build Instructions
@@ -60,7 +67,6 @@ Building this project provided me with invaluable experience and pushed my skill
    ```bash
    pip install -r requirements.txt
    ```
-   *(Installs PyQt6, pandas, pdfplumber, matplotlib, reportlab, and openpyxl)*
 
 3. **Run the application:**
    ```bash
