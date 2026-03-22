@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Database
+bank_data.db
+*.sqlite3
+*.db
+
+# Generated data files / Exports
+mock_statement.pdf
+financial_report.pdf
+financial_report.csv
+financial_report.xlsx
+*.csv
+*.xlsx

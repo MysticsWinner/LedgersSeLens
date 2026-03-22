@@ -1,0 +1,6 @@
+PyQt6
+pandas
+pdfplumber
+matplotlib
+reportlab
+openpyxl
