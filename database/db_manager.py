@@ -20,7 +20,7 @@ def init_db():
         )
     ''')
     
-    # Create Transactions table
+    # Create Transactions table (Legacy fields)
     c.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +30,22 @@ def init_db():
             category_name TEXT
         )
     ''')
+    
+    # V2 Migrations
+    try:
+        c.execute('ALTER TABLE transactions ADD COLUMN account_name TEXT DEFAULT "Main Account"')
+    except sqlite3.OperationalError:
+        pass # Column exists
+
+    try:
+        c.execute('ALTER TABLE transactions ADD COLUMN notes TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE transactions ADD COLUMN receipt_path TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass
     
     # Seed default categories if empty
     c.execute('SELECT COUNT(*) FROM categories')
@@ -74,15 +90,15 @@ def get_categories():
     conn.close()
     return [{'name': row[0], 'color': row[1], 'match_rules': row[2], 'budget_limit': row[3]} for row in cats]
 
-def save_transaction(date, desc, amount, category_name):
+def save_transaction(date, desc, amount, category_name, account_name="Main Account", notes="", receipt_path=""):
     conn = get_connection()
     c = conn.cursor()
     # Check if a transaction exists to avoid duplicates
-    c.execute('SELECT COUNT(*) FROM transactions WHERE date=? AND description=? AND amount=?', 
-              (date, desc, amount))
+    c.execute('SELECT COUNT(*) FROM transactions WHERE date=? AND description=? AND amount=? AND account_name=?', 
+              (date, desc, amount, account_name))
     if c.fetchone()[0] == 0:
-        c.execute('INSERT INTO transactions (date, description, amount, category_name) VALUES (?, ?, ?, ?)',
-                  (date, desc, amount, category_name))
+        c.execute('INSERT INTO transactions (date, description, amount, category_name, account_name, notes, receipt_path) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                  (date, desc, amount, category_name, account_name, notes, receipt_path))
         conn.commit()
         added = True
     else:
@@ -90,10 +106,34 @@ def save_transaction(date, desc, amount, category_name):
     conn.close()
     return added
 
-def get_all_transactions():
+def get_all_transactions(start_date=None, end_date=None, account_filter="All Accounts"):
     conn = get_connection()
     c = conn.cursor()
-    c.execute('SELECT date, description, amount, category_name FROM transactions')
+    
+    query = 'SELECT id, date, description, amount, category_name, account_name, notes, receipt_path FROM transactions WHERE 1=1'
+    params = []
+    
+    if account_filter and account_filter != "All Accounts":
+        query += ' AND account_name=?'
+        params.append(account_filter)
+        
+    if start_date:
+        query += ' AND date >= ?'
+        params.append(start_date)
+        
+    if end_date:
+        query += ' AND date <= ?'
+        params.append(end_date)
+        
+    c.execute(query, params)
     rows = c.fetchall()
     conn.close()
     return rows
+
+def get_accounts():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT DISTINCT account_name FROM transactions WHERE account_name IS NOT NULL')
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows if r[0]]
