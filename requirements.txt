@@ -6,3 +6,8 @@ reportlab
 openpyxl
 fastapi
 uvicorn
+scikit-learn
+plyer
+plaid-python
+pytest
+httpx

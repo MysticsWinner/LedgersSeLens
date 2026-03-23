@@ -1,16 +1,23 @@
 # LedgerLens
 
+> **Problem Statement:** Modern personal finance apps force users to surrender their sensitive banking data to cloud servers. LedgerLens solves this by providing a powerful, offline-first dashboard that parses raw bank statements natively on your machine, guaranteeing absolute data privacy without sacrificing advanced analytics or predictive forecasting.
+
 LedgerLens is an advanced, offline-first personal finance dashboard built over **3,000+ lines of Python** and **PyQt6**. It ingests, analyzes, and visualizes raw bank statements (PDFs and CSVs) seamlessly. With its modern dark-theme UI, predictive forecasting, AI-assisted categorization, and robust SQLite persistence, it serves as a fully featured local ledger that guarantees absolute data privacy.
+
+## 📸 Demo
+*(Insert a GIF or screenshot of the React Web Dashboard or PyQt6 UI here)*
+![Demo Placeholder](https://via.placeholder.com/800x450/0d1117/2f81f7?text=LedgerLens+Dashboard)
 
 ## ✨ Key Features 
 
 - **100% Offline Privacy:** Processes and persists `10,000+` rows of transactions entirely locally via an embedded SQLite ledger with zero cloud dependencies.
-- **4-in-1 Dockable Dashboard:** Engineered using Qt's native `QDockWidget` architecture allowing users to drag, float, and snap **4** independent analysis modules (Trends, Balances, Raw Data, Budgets) into completely personalized layouts.
-- **2-Tiered Categorization Engine:** Employs explicit string-matching tracking for mapped keywords and an intelligent fallback heuristic dictionary for predicting missing merchant mappings natively.
-- **7-Day Predictive Forecasting:** Leverages `pandas` to calculate rolling velocity averages, accurately plotting end-of-month spend trajectories onto `matplotlib` bar graphs.
-- **Dynamic Tag Sandbox:** A customized UI table matrix allowing users to test regex-matching rules dynamically using distinct, visual Tag Chips (built with customized `0px` inline paddings).
-- **3 Universal Export Formats:** Serializes cleansed SQL database streams seamlessly into raw **CSV**, automatically formatted **Excel (.xlsx)**, and programmatic multi-page **PDF** output reports (`reportlab`).
-- **Headless CLI & REST API:** Fully featured `FastAPI` server and built-in Python CLI allowing programmatic data access, pipeline automation, and JSON endpoint serving without launching the graphical interface.
+- **Machine Learning Categorization:** Integrates `scikit-learn` Naive Bayes NLP models to intelligently predict and auto-categorize previously unseen merchant descriptions.
+- **Subscription & Recurring Payment Detector:** Algorithmically groups and identifies trailing 7-day and 30-day identical expenses tracking your active subscriptions effortlessly.
+- **Desktop Budget Notifications:** Native OS toaster warnings powered by `plyer` instantly alert you if your real-time ingested data breaches monthly dollar thresholds.
+- **Plaid API Sync Ready:** Built-in REST endpoints designed to interface seamlessly with the Plaid SDK for live bank-data integration.
+- **Modern Web Dashboard:** Features an ultra-premium, dark-themed, glassmorphic React/Vite front-end that visually projects your Pandas math locally.
+- **4-in-1 Dockable GUI Dashboard:** Engineered using Qt's native `QDockWidget` architecture allowing users to drag, float, and snap analysis modules.
+- **7-Day Predictive Forecasting:** Leverages `pandas` to calculate rolling velocity averages, plotting end-of-month spend trajectories.
 
 ## 🏗️ Architecture
 
@@ -46,11 +53,13 @@ Building this application pushed the bounds of my technical comfort zone and dra
 
 - **Core:** Python 3.10+, argparse
 - **GUI:** PyQt6
-- **Server / API:** FastAPI, Uvicorn
-- **Data Science:** pandas, pdfplumber
+- **Web Frontend:** React, Vite, CSS3
+- **Server / API:** FastAPI, Uvicorn, httpx
+- **Data Science:** pandas, pdfplumber, scikit-learn
+- **Testing Engine:** pytest
 - **Graphics:** matplotlib
 - **Database:** SQLite3
-- **I/O & Logging:** openpyxl, reportlab
+- **I/O & System:** openpyxl, reportlab, plyer
 
 ## 📥 Installation
 
@@ -99,7 +108,23 @@ Spin up a local HTTP server to access your LedgerLens data programmatically via 
 ```bash
 python server.py
 ```
-*The API will mount locally at `http://127.0.0.1:8000`. You can query endpoints such as `/api/insights` or `/api/transactions`.*
+*The API will mount locally at `http://127.0.0.1:8000`. You can query endpoints such as `/api/insights` or `/api/subscriptions`.*
+
+### 4. Modern Web Frontend (React + Vite)
+If you prefer a web-browser experience to the native desktop GUI, you can launch the beautiful React dashboard:
+```bash
+# Make sure the Python server.py is running on port 8000 first!
+cd frontend
+npm install
+npm run dev
+```
+
+### 5. Automated Test Suite (Pytest)
+LedgerLens includes an exhaustive, 17-test CI/CD-ready test suite that mathematically verifies the Machine Learning logic, CSV Pandas parsing, CLI headless hooks, and SQLite database edge cases.
+```bash
+python -m pytest tests/ -v
+```
+*Note: The test suite uses dynamic, isolated physical database files (e.g., `test_ml_data.db`), guaranteeing that executing the tests will **never** touch or corrupt your real personal Ledger data.*
 
 ## 💻 Usage Guide
 

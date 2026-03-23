@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 import pandas as pd
 import json
-from core.analyzer import load_all_transactions_df, generate_insights
+from core.analyzer import load_all_transactions_df, generate_insights, detect_subscriptions
 
 app = FastAPI(
     title="LedgerLens API",
@@ -47,6 +47,47 @@ def get_insights():
     }
     
     return response_data
+
+@app.get("/api/subscriptions")
+def get_subscriptions():
+    df = load_all_transactions_df()
+    if df.empty:
+        return {"data": []}
+        
+    subs = detect_subscriptions(df)
+    return {"data": subs}
+
+@app.post("/api/plaid/sync")
+def sync_plaid_data(access_token: str = "mock-sandbox-token"):
+    """
+    Mocks a Plaid API synchronization endpoint. In production, this would use 
+    the `plaid-python` client to pull real transactions using the user's access_token.
+    """
+    from database.db_manager import save_transaction
+    import datetime
+    
+    # Mock some data from "Plaid"
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    mock_plaid_data = [
+        {"date": today, "desc": "AMAZON WEB SERVICES", "amount": -15.42, "category": "Utilities"},
+        {"date": today, "desc": "PAYROLL DIRECT DEPOSIT", "amount": 2500.00, "category": "Income"},
+        {"date": today, "desc": "UBER TRIP SF", "amount": -22.50, "category": "Transport"}
+    ]
+    
+    for tx in mock_plaid_data:
+        save_transaction(
+            tx["date"],
+            tx["desc"],
+            tx["amount"],
+            tx["category"],
+            "Plaid Linked Account"
+        )
+        
+    return {
+        "status": "success", 
+        "message": f"Successfully synced {len(mock_plaid_data)} transactions from Plaid.",
+        "transactions_imported": mock_plaid_data
+    }
 
 if __name__ == "__main__":
     import uvicorn

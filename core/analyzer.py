@@ -17,6 +17,16 @@ def categorize_transaction(description, categories_cache):
             if keyword and keyword in description_lower:
                 return cat['name']
     
+    # Machine Learning Fallback
+    try:
+        from core.ml_engine import predict_category
+        ml_pred = predict_category(description)
+        if ml_pred != "Other":
+            if any(c['name'] == ml_pred for c in categories_cache):
+                return ml_pred
+    except Exception as e:
+        print(f"ML categorization failed: {e}")
+        
     # AI Fallback Mock / Advanced Heuristic Matching
     ai_guesses = {
         'doordash': 'Food', 'ubereats': 'Food', 'grubhub': 'Food',
@@ -64,7 +74,28 @@ def _process_transactions(transactions, account_name):
                 account_name
             )
             
-    return load_all_transactions_df(account_filter="All Accounts")
+    result_df = load_all_transactions_df(account_filter="All Accounts")
+    
+    # Phase 3: Budget Notification Check
+    if not result_df.empty:
+        import datetime
+        try:
+            from plyer import notification
+            current_month = datetime.datetime.now().strftime('%Y-%m')
+            this_month = result_df[result_df['Date'].dt.strftime('%Y-%m') == current_month]
+            monthly_expenses = this_month[this_month['Amount'] < 0]['Amount'].abs().sum()
+            
+            if monthly_expenses > 2500.0:
+                notification.notify(
+                    title='LedgerLens Budget Alert',
+                    message=f'Warning: Monthly expenses have reached ${monthly_expenses:,.2f}, exceeding the $2,500 budget!',
+                    app_name='LedgerLens',
+                    timeout=5
+                )
+        except Exception as e:
+            print(f"Notification failed: {e}")
+            
+    return result_df
 
 def load_all_transactions_df(start_date=None, end_date=None, account_filter="All Accounts"):
     rows = get_all_transactions(start_date, end_date, account_filter)
@@ -116,7 +147,11 @@ def parse_csv_statement(file_path, account_name):
         if all(col in df_csv.columns for col in ['Date', 'Description', 'Amount']):
             for _, row in df_csv.iterrows():
                  try:
+                     if pd.isna(row['Amount']):
+                         continue
                      amt_str = str(row['Amount']).replace('$', '').replace(',', '').strip()
+                     if not amt_str or amt_str.lower() == 'nan':
+                         continue
                      if amt_str.startswith('(') and amt_str.endswith(')'):
                          amount = -float(amt_str[1:-1])
                      else:
@@ -169,3 +204,40 @@ def generate_insights(df):
         'forecast': forecast,
         'transactions': df
     }
+
+def detect_subscriptions(df):
+    """
+    Detects recurring transactions (same description and same amount)
+    occurring approximately every 30 days or 7 days.
+    """
+    if df.empty:
+        return []
+    
+    expenses = df[df['Amount'] < 0].copy()
+    if expenses.empty:
+        return []
+        
+    expenses = expenses.sort_values(by='Date')
+    subscriptions = []
+    
+    grouped = expenses.groupby(['Description', 'Amount'])
+    
+    for (desc, amount), group in grouped:
+        if len(group) >= 2:
+            dates = group['Date'].dt.date.tolist()
+            diffs = [(dates[i] - dates[i-1]).days for i in range(1, len(dates))]
+            if not diffs: 
+                continue
+            avg_diff = sum(diffs) / len(diffs)
+            
+            if (6 <= avg_diff <= 8) or (27 <= avg_diff <= 33):
+                freq = "Weekly" if avg_diff < 10 else "Monthly"
+                subscriptions.append({
+                    "description": str(desc),
+                    "amount": float(amount),
+                    "frequency": freq,
+                    "avg_days_between": round(avg_diff, 1),
+                    "last_charged": str(dates[-1])
+                })
+                
+    return sorted(subscriptions, key=lambda x: x['amount'])
