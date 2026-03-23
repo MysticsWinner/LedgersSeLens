@@ -1,6 +1,6 @@
-# BankAnalyzerQt
+# LedgerLens
 
-BankAnalyzerQt is an advanced, offline-first personal finance dashboard built over **3,000+ lines of Python** and **PyQt6**. It ingests, analyzes, and visualizes raw bank statements (PDFs and CSVs) seamlessly. With its modern dark-theme UI, predictive forecasting, AI-assisted categorization, and robust SQLite persistence, it serves as a fully featured local ledger that guarantees absolute data privacy.
+LedgerLens is an advanced, offline-first personal finance dashboard built over **3,000+ lines of Python** and **PyQt6**. It ingests, analyzes, and visualizes raw bank statements (PDFs and CSVs) seamlessly. With its modern dark-theme UI, predictive forecasting, AI-assisted categorization, and robust SQLite persistence, it serves as a fully featured local ledger that guarantees absolute data privacy.
 
 ## ✨ Key Features 
 
@@ -10,6 +10,7 @@ BankAnalyzerQt is an advanced, offline-first personal finance dashboard built ov
 - **7-Day Predictive Forecasting:** Leverages `pandas` to calculate rolling velocity averages, accurately plotting end-of-month spend trajectories onto `matplotlib` bar graphs.
 - **Dynamic Tag Sandbox:** A customized UI table matrix allowing users to test regex-matching rules dynamically using distinct, visual Tag Chips (built with customized `0px` inline paddings).
 - **3 Universal Export Formats:** Serializes cleansed SQL database streams seamlessly into raw **CSV**, automatically formatted **Excel (.xlsx)**, and programmatic multi-page **PDF** output reports (`reportlab`).
+- **Headless CLI & REST API:** Fully featured `FastAPI` server and built-in Python CLI allowing programmatic data access, pipeline automation, and JSON endpoint serving without launching the graphical interface.
 
 ## 🏗️ Architecture
 
@@ -21,6 +22,7 @@ The codebase was rigorously refactored, breaking down a rigid monolithic script 
 - **`ui/`**: 
   - **`theme.py` Engine**: A centralized **150+ line global cascaded stylesheet (QSS)** delivering the dark-mode glassmorphism aesthetic uniformly.
   - Isolated subdirectories (`windows/`, `dialogs/`, and `components/`) decoupling the `QDockWidget` routing from the raw pandas data.
+- **`cli.py` & `server.py`**: Dedicated headless entrypoints exposing the core database layers to terminal scripts and RESTful JSON endpoints (via FastAPI) respectively.
 
 ## ⏱️ Development Journey & Effort
 
@@ -42,33 +44,75 @@ Building this application pushed the bounds of my technical comfort zone and dra
 
 ## 🛠️ Technologies Used
 
-- **Core:** Python 3.10+
+- **Core:** Python 3.10+, argparse
 - **GUI:** PyQt6
+- **Server / API:** FastAPI, Uvicorn
 - **Data Science:** pandas, pdfplumber
 - **Graphics:** matplotlib
 - **Database:** SQLite3
 - **I/O & Logging:** openpyxl, reportlab
 
-## ⚙️ Getting Started
+## 📥 Installation
 
-### Prerequisites
-- Python 3.10+
-- Pip package manager
-
-### Build Instructions
+LedgerLens requires Python 3.10+ and uses standard `pip` for dependency management. No heavy databases or external servers are required to be installed manually, as it uses an embedded SQLite database!
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/BankAnalyzerQt.git
-   cd BankAnalyzerQt
+   git clone https://github.com/MysticsWinner/LedgerLens.git
+   cd LedgerLens
    ```
 
-2. **Install dependencies:**
+2. **Create a Virtual Environment (Recommended):**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate       # On Linux/macOS
+   .\venv\Scripts\activate        # On Windows
+   ```
+
+3. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Run the application:**
-   ```bash
-   python main.py
-   ```
+## 🚀 Running the App
+
+LedgerLens provides three distinct entrypoints to interact with your local financial data:
+
+### 1. Graphical Dashboard (GUI)
+Launch the primary visual application to view the dockable dashboard, interact with your transactions, and modify categorization rules.
+```bash
+python main.py
+```
+
+### 2. Command Line Interface (CLI)
+Interact with your data directly from the terminal without launching the GUI. Perfect for quick headless checks.
+```bash
+# View a high-level summary of your expenses and top categories
+python cli.py insights
+
+# View your 5 most recent transactions
+python cli.py transactions --limit 5
+```
+
+### 3. REST API Server (FastAPI)
+Spin up a local HTTP server to access your LedgerLens data programmatically via JSON endpoints. This is incredibly useful if you want to query your data via external local services or automate scripting pipelines.
+```bash
+python server.py
+```
+*The API will mount locally at `http://127.0.0.1:8000`. You can query endpoints such as `/api/insights` or `/api/transactions`.*
+
+## 💻 Usage Guide
+
+### Ingesting Data
+- **Through the UI**: Open the application via `python main.py`, navigate to the Data/Upload module (depending on your dock layout), and select your raw bank statement PDFs or CSVs. LedgerLens will automatically parse, cleanse, and insert these into the local SQLite database.
+
+### Categorizing Transactions
+- **Tag Sandbox**: Use the visual Tag Chips in the dashboard to map explicit keywords (e.g., "target", "doordash", "shell") to customized categories.
+- **Heuristic Fallback**: If a transaction doesn't match your explicit tags, the engine will attempt to guess the category using a built-in heuristic dictionary before defaulting to "Other".
+
+### Reviewing Forecasts & Insights
+- **Trends Module**: View the 7-day predictive forecasting and visual velocity charts summarizing where your expenditures are going month-over-month.
+- **REST Equivalent**: Run `curl http://localhost:8000/api/insights` while the server is running to get this same forecast strictly in JSON format.
+
+### Exporting Reports
+- Click the necessary export buttons on the GUI dashboard to generate comprehensive `.xlsx` spreadsheets, raw `.csv` dumps, or heavily formatted, multi-page `.pdf` reports of your cleansed ledger data. Every export happens entirely offline!

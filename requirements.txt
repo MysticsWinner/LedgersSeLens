@@ -4,3 +4,5 @@ pdfplumber
 matplotlib
 reportlab
 openpyxl
+fastapi
+uvicorn

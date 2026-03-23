@@ -17,7 +17,7 @@ from ui.components.cards import create_card
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Bank Analyzer Dashboard")
+        self.setWindowTitle("LedgerLens Dashboard")
         self.resize(1300, 900)
 
         central_widget = QWidget()
