@@ -1,84 +1,164 @@
-import pdfplumber
-import pandas as pd
+"""
+LedgerSeLens Financial Analyzer & Ingestion Dispatcher
+Integrates data ingestion across PDF, Excel, CSV, and OCR Images with
+multi-tier payment categorization and subscription detection.
+"""
+
 import re
+import datetime
+import logging
+import pandas as pd
+from typing import Dict, Any, List, Optional
+
 from database.db_manager import get_categories, save_transaction, get_all_transactions, init_db
+from core.payment_categorizer import classify_payment
+from core.data_ingestion import ingest_file, IngestionResult
+
+logger = logging.getLogger(__name__)
 
 # Initialize database on module load
-init_db()
+try:
+    init_db()
+except Exception as e:
+    logger.debug(f"init_db deferred: {e}")
 
-def categorize_transaction(description, categories_cache):
-    description_lower = str(description).lower()
+def categorize_transaction(description: str, categories_cache: Optional[List[Dict[str, Any]]] = None, amount: Optional[float] = None) -> str:
+    """
+    Categorizes a transaction description through a 5-tier fallback cascade:
+      1. Explicit user/database match rules
+      2. Specialized payment categorization (Credit Card, Loan, Transfer, Bill, Tax, Sub)
+      3. Machine Learning classifier (Naive Bayes in ml_engine.py)
+      4. Built-in merchant & keyword dictionary heuristics
+      5. Safe default ('Other')
+    """
+    if not description:
+        return 'Other'
+
+    desc_str = str(description)
+    desc_lower = desc_str.lower()
+    
+    if categories_cache is None:
+        categories_cache = get_categories()
+
+    # Tier 1: Explicit Database Rules
     for cat in categories_cache:
-        rules = cat['match_rules']
+        rules = cat.get('match_rules')
         if not rules:
             continue
         keywords = [k.strip().lower() for k in rules.split(',')]
         for keyword in keywords:
-            if keyword and keyword in description_lower:
+            if keyword and keyword in desc_lower:
                 return cat['name']
-    
-    # Machine Learning Fallback
+
+    # Tier 2: Payment Classification Engine
+    payment_category = classify_payment(desc_str, amount)
+    if payment_category:
+        if any(c['name'] == payment_category for c in categories_cache):
+            return payment_category
+
+    # Tier 3: Machine Learning Model Fallback
     try:
         from core.ml_engine import predict_category
-        ml_pred = predict_category(description)
-        if ml_pred != "Other":
+        ml_pred = predict_category(desc_str)
+        if ml_pred and ml_pred != "Other":
             if any(c['name'] == ml_pred for c in categories_cache):
                 return ml_pred
     except Exception as e:
-        print(f"ML categorization failed: {e}")
-        
-    # AI Fallback Mock / Advanced Heuristic Matching
+        logger.debug(f"ML categorization skipped: {e}")
+
+    # Tier 4: Heuristic Merchant Dictionary
     ai_guesses = {
-        'doordash': 'Food', 'ubereats': 'Food', 'grubhub': 'Food',
-        'chevron': 'Transport', 'shell': 'Transport', 'arco': 'Transport',
-        'delta': 'Transport', 'american airlines': 'Transport',
-        'walmart': 'Shopping', 'target': 'Shopping', 'amazon': 'Shopping',
-        'hospital': 'Other', 'clinic': 'Other', 'pharmacy': 'Other',
-        'comcast': 'Utilities', 'pg&e': 'Utilities', 'verizon': 'Utilities',
-        'payroll': 'Income', 'deposit': 'Income', 'venmo': 'Other'
+        'doordash': 'Food', 'ubereats': 'Food', 'grubhub': 'Food', 'starbucks': 'Food',
+        'mcdonalds': 'Food', 'chipotle': 'Food', 'panera': 'Food', 'subway': 'Food',
+        'chevron': 'Transport', 'shell': 'Transport', 'arco': 'Transport', 'exxon': 'Transport',
+        'delta': 'Transport', 'american airlines': 'Transport', 'united airlines': 'Transport',
+        'uber': 'Transport', 'lyft': 'Transport', 'caltrain': 'Transport',
+        'walmart': 'Shopping', 'target': 'Shopping', 'amazon': 'Shopping', 'costco': 'Shopping',
+        'best buy': 'Shopping', 'apple store': 'Shopping', 'home depot': 'Shopping',
+        'hospital': 'Healthcare', 'clinic': 'Healthcare', 'pharmacy': 'Healthcare', 'cvs': 'Healthcare', 'walgreens': 'Healthcare',
+        'comcast': 'Utilities', 'pg&e': 'Utilities', 'verizon': 'Utilities', 'at&t': 'Utilities', 'coned': 'Utilities',
+        'payroll': 'Income', 'direct deposit': 'Income', 'salary': 'Income', 'tax refund': 'Income',
+        'netflix': 'Entertainment', 'spotify': 'Entertainment', 'hulu': 'Entertainment', 'steam': 'Entertainment',
+        'venmo': 'Payment: Transfer & P2P', 'zelle': 'Payment: Transfer & P2P', 'paypal': 'Payment: Transfer & P2P'
     }
     for key, val in ai_guesses.items():
-        if key in description_lower:
+        if key in desc_lower:
             if any(c['name'] == val for c in categories_cache):
                 return val
-    
+
+    # Tier 5: Safe Default
     return 'Other'
 
-def parse_statement(file_path, account_name="Main Account"):
+def parse_statement(file_path: str, account_name: str = "Main Account") -> pd.DataFrame:
     """
-    Dispatcher to handle PDF or CSV files.
+    Universal ingestion dispatcher:
+    Accepts CSV, TSV, Excel (.xlsx, .xls), PDF, and Images (.png, .jpg, .jpeg).
     """
-    if str(file_path).lower().endswith('.csv'):
-        return parse_csv_statement(file_path, account_name)
-    else:
-        return parse_pdf_statement(file_path, account_name)
+    result = ingest_file(file_path, account_name)
+    df_parsed = result.dataframe
+    
+    if df_parsed.empty:
+        return load_all_transactions_df(account_filter="All Accounts")
+        
+    return _process_transactions(df_parsed.to_dict(orient='records'), account_name)
 
-def _process_transactions(transactions, account_name):
+def parse_csv_statement(file_path: str, account_name: str = "Main Account") -> pd.DataFrame:
+    """Specific CSV statement parser with automatic fallbacks."""
+    from core.data_ingestion import ingest_csv
+    result = ingest_csv(file_path, account_name)
+    return _process_transactions(result.dataframe.to_dict(orient='records'), account_name)
+
+def parse_excel_statement(file_path: str, account_name: str = "Main Account") -> pd.DataFrame:
+    """Specific Excel statement parser."""
+    from core.data_ingestion import ingest_excel
+    result = ingest_excel(file_path, account_name)
+    return _process_transactions(result.dataframe.to_dict(orient='records'), account_name)
+
+def parse_pdf_statement(file_path: str, account_name: str = "Main Account") -> pd.DataFrame:
+    """Specific PDF statement parser with layout and OCR fallbacks."""
+    from core.data_ingestion import ingest_pdf
+    result = ingest_pdf(file_path, account_name)
+    return _process_transactions(result.dataframe.to_dict(orient='records'), account_name)
+
+def _process_transactions(transactions: List[Dict[str, Any]], account_name: str) -> pd.DataFrame:
+    """
+    Normalizes, categorizes, and saves transactions to the database.
+    """
     cats = get_categories()
     
-    df = pd.DataFrame(transactions)
-    if not df.empty:
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df = df.dropna(subset=['Date'])
-        
-        # Categorize
-        df['Category'] = df['Description'].apply(lambda d: categorize_transaction(d, cats))
-        
-        # Save to DB
-        for _, row in df.iterrows():
-            save_transaction(
-                row['Date'].strftime('%Y-%m-%d'), 
-                str(row['Description']), 
-                float(row['Amount']), 
-                str(row['Category']),
-                account_name
-            )
+    if transactions:
+        df = pd.DataFrame(transactions)
+        if not df.empty and 'Date' in df.columns and 'Amount' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df = df.dropna(subset=['Date', 'Amount'])
+            
+            # Categorize any rows where category is missing or 'Other'
+            def _ensure_category(row):
+                existing_cat = row.get('Category')
+                if existing_cat and str(existing_cat).strip().lower() not in ('none', 'nan', '', 'other'):
+                    # Validate against known categories
+                    if any(c['name'] == existing_cat for c in cats):
+                        return existing_cat
+                return categorize_transaction(row.get('Description', ''), cats, row.get('Amount'))
+
+            df['Category'] = df.apply(_ensure_category, axis=1)
+            
+            # Persist to DB
+            for _, row in df.iterrows():
+                save_transaction(
+                    date=row['Date'].strftime('%Y-%m-%d'), 
+                    desc=str(row['Description']), 
+                    amount=float(row['Amount']), 
+                    category_name=str(row['Category']),
+                    account_name=str(row.get('Account', account_name)),
+                    notes=str(row.get('Notes', '')),
+                    receipt_path=str(row.get('Receipt', ''))
+                )
             
     result_df = load_all_transactions_df(account_filter="All Accounts")
     
-    # Phase 3: Budget Notification Check
+    # Budget Notification Check
     if not result_df.empty:
-        import datetime
         try:
             from plyer import notification
             current_month = datetime.datetime.now().strftime('%Y-%m')
@@ -93,82 +173,22 @@ def _process_transactions(transactions, account_name):
                     timeout=5
                 )
         except Exception as e:
-            print(f"Notification failed: {e}")
+            logger.debug(f"Notification skipped: {e}")
             
     return result_df
 
-def load_all_transactions_df(start_date=None, end_date=None, account_filter="All Accounts"):
+def load_all_transactions_df(start_date=None, end_date=None, account_filter="All Accounts") -> pd.DataFrame:
     rows = get_all_transactions(start_date, end_date, account_filter)
     if not rows:
-        return pd.DataFrame()
-    # id, date, description, amount, category_name, account_name, notes, receipt_path
+        return pd.DataFrame(columns=['ID', 'Date', 'Description', 'Amount', 'Category', 'Account', 'Notes', 'Receipt'])
+        
     df = pd.DataFrame(rows, columns=['ID', 'Date', 'Description', 'Amount', 'Category', 'Account', 'Notes', 'Receipt'])
     df['Date'] = pd.to_datetime(df['Date'])
     df['Amount'] = df['Amount'].astype(float)
-    # Sort chronologically
     df = df.sort_values(by='Date', ascending=False).reset_index(drop=True)
     return df
 
-def parse_pdf_statement(file_path, account_name):
-    transactions = []
-    with pdfplumber.open(file_path) as pdf:
-        for page in pdf.pages:
-            table = page.extract_table()
-            if table:
-                start_idx = 0
-                if "Date" in str(table[0]) or "Description" in str(table[0]):
-                    start_idx = 1
-                for row in table[start_idx:]:
-                    if len(row) >= 3 and row[0] and row[1]:
-                        date = row[0]
-                        desc = row[1]
-                        amount_str = row[2]
-                        if not amount_str: 
-                            continue
-                        amount_str = amount_str.replace('$', '').replace(',', '').strip()
-                        try:
-                            if amount_str.startswith('(') and amount_str.endswith(')'):
-                                amount = -float(amount_str[1:-1])
-                            else:
-                                amount = float(amount_str)
-                            transactions.append({
-                                'Date': date,
-                                'Description': desc,
-                                'Amount': amount
-                            })
-                        except ValueError:
-                            pass
-    return _process_transactions(transactions, account_name)
-
-def parse_csv_statement(file_path, account_name):
-    transactions = []
-    try:
-        df_csv = pd.read_csv(file_path)
-        if all(col in df_csv.columns for col in ['Date', 'Description', 'Amount']):
-            for _, row in df_csv.iterrows():
-                 try:
-                     if pd.isna(row['Amount']):
-                         continue
-                     amt_str = str(row['Amount']).replace('$', '').replace(',', '').strip()
-                     if not amt_str or amt_str.lower() == 'nan':
-                         continue
-                     if amt_str.startswith('(') and amt_str.endswith(')'):
-                         amount = -float(amt_str[1:-1])
-                     else:
-                         amount = float(amt_str)
-                     transactions.append({
-                         'Date': row['Date'],
-                         'Description': row['Description'],
-                         'Amount': amount
-                     })
-                 except ValueError:
-                     pass
-    except Exception as e:
-        print(f"Error parsing CSV: {e}")
-
-    return _process_transactions(transactions, account_name)
-
-def generate_insights(df):
+def generate_insights(df: pd.DataFrame) -> Dict[str, Any]:
     if df.empty or df.get('empty', False) is True:
         return {
             'total_spent': 0.0,
@@ -197,18 +217,17 @@ def generate_insights(df):
     forecast = expenses_timeline.rolling(window=7, min_periods=1).mean().abs() if not expenses_timeline.empty else pd.Series(dtype=float)
     
     return {
-        'total_spent': total_spent,
-        'total_received': total_received,
+        'total_spent': float(total_spent),
+        'total_received': float(total_received),
         'category_breakdown': category_breakdown,
         'timeline': timeline,
         'forecast': forecast,
         'transactions': df
     }
 
-def detect_subscriptions(df):
+def detect_subscriptions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
-    Detects recurring transactions (same description and same amount)
-    occurring approximately every 30 days or 7 days.
+    Detects recurring transactions occurring approximately every 30 days or 7 days.
     """
     if df.empty:
         return []

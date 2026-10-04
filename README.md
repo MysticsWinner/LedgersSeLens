@@ -33,9 +33,45 @@ LedgerSeLens Distributed is a **Planet-Scale, Horizontally Scalable, Event-Drive
 - **Database:** PostgreSQL (Sharded array)
 - **API Environment:** FastAPI, Uvicorn, Python, Pandas
 
-## 📥 Installation & Running
+## 🚀 Unified Execution & Feature Hub (`main.py`)
 
-LedgerSeLens no longer boots a GUI window logic. It is a headless Distributed network designed for mass deployment.
+All features of LedgerSeLens—Desktop GUI, Distributed API Server, Data Ingestion, OCR Scanner, Sharding, Offline Fallbacks, Reconciler, and Diagnostics—are accessible via the **main entrypoint command**:
+
+```bash
+# Default: Launches the Modern PyQt6 Desktop GUI Dashboard
+python main.py
+
+# Interactive Mode: Terminal menu with all 16 features
+python main.py --cli
+# (or: python main.py menu)
+```
+
+### Direct CLI Subcommands
+
+Every feature is also accessible via direct CLI commands:
+
+| Feature / Command | Usage | Description |
+| :--- | :--- | :--- |
+| **Desktop GUI** | `python main.py gui` | Full-featured PyQt6 dashboard with dark theme, docks, and charts |
+| **REST API Server** | `python main.py server [--port 8000]` | Starts FastAPI Uvicorn distributed server |
+| **Ingestion Worker** | `python main.py worker` | Background queue ingestion daemon |
+| **Frontend Web** | `python main.py web` | Runs React/Vite development web UI |
+| **Universal Ingestion**| `python main.py ingest <file> [--account ...]` | Ingests PDF, Excel (.xlsx/.xls), CSV (.csv/.tsv), or Receipt images |
+| **OCR Scanner** | `python main.py ocr <image_or_pdf>` | Extracts merchant, date, amount, category using Tesseract / Heuristics |
+| **Sync & Reconcile** | `python main.py sync` (or `reconcile`) | Bidirectional sync between local SQLite and PostgreSQL shards |
+| **Financial Insights** | `python main.py insights [--account ...]` | Computes totals, net savings, and top spending categories |
+| **Transactions** | `python main.py transactions [--limit 10]` | Shows recent transactions with custom limits & account filter |
+| **Subscriptions** | `python main.py subscriptions` | Auto-detects recurring bills and subscriptions |
+| **Plaid Bank Feed** | `python main.py plaid` | Imports transactions from Plaid sandbox bank feeds |
+| **Data Export** | `python main.py export <file> --format csv\|excel\|pdf` | Exports ledger to CSV, Excel, or PDF report |
+| **System Status** | `python main.py status` | Inspects Postgres shards, SQLite fallback, Redis, and OCR status |
+| **Mock Statement** | `python main.py mock-data [--output file.pdf]` | Generates synthetic bank statement for testing |
+| **Chaos Monkey** | `python main.py chaos` | Fault-injection resilience tester targeting container nodes |
+| **Automated Tests** | `python main.py test` | Runs the full 31-test pytest validation suite |
+
+---
+
+## 📥 Installation & Running
 
 1. **Clone the repository:**
    ```bash
@@ -43,25 +79,31 @@ LedgerSeLens no longer boots a GUI window logic. It is a headless Distributed ne
    cd LedgersSeLens
    ```
 
-2. **Boot the Global Cluster:**
-   Ensure Docker Desktop is running on your machine, then:
+2. **Setup Python Environment:**
    ```bash
-   docker-compose down -v
+   python -m venv .venv
+   .\.venv\Scripts\activate     # Windows PowerShell
+   pip install -r requirements.txt
+   ```
+
+3. **Run the Project:**
+   ```bash
+   # Launch Desktop Dashboard
+   python main.py
+
+   # Or launch the interactive terminal menu
+   python main.py --cli
+   ```
+
+4. **Boot Global Distributed Cluster (Optional Docker Mode):**
+   ```bash
    docker-compose up --build -d
    ```
-   *This single command automatically provisions Zookeeper, Kafka, Redis, 3x Postgres Shards, 3x Stateless API Replicas, 2x Worker Queue Daemons, and the NGINX Reverse Proxy orchestrator.*
+   *Automatically provisions Zookeeper, Kafka, Redis, 3x Postgres Shards, 3x Stateless API Replicas, Worker Daemons, and NGINX Reverse Proxy.*
 
-3. **Chaos Monkey (Optional Survivability Test):**
-   Execute the Chaos Monkey script locally to watch the cluster survive Random Docker Node assassinations!
+5. **Run the Automated Test Suite:**
    ```bash
-   python chaos_monkey.py
-   ```
-   *Spam the `/api/insights` endpoint while nodes die, and watch the Graceful Degradation logic switch the server state in real time!*
-
-4. **Run the Mathematical Algorithmic Test Suite:**
-   ```bash
-   python -m pip install -r requirements.txt
-   python -m pytest tests/test_system.py -v
+   python main.py test
    ```
 
 ## ⚙️ Configuration

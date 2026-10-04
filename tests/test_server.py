@@ -61,3 +61,25 @@ def test_post_plaid_sync():
     data = response.json()
     assert data["status"] == "success"
     assert len(data["transactions_imported"]) == 3
+
+def test_post_upload_statement():
+    csv_bytes = b"Date,Description,Amount\n2026-03-20,TEST MERCHANT,$-50.00\n2026-03-21,PAYCHECK,$1500.00\n"
+    response = client.post(
+        "/api/upload",
+        files={"file": ("test_statement.csv", csv_bytes, "text/csv")},
+        data={"account_name": "Chase Checking"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["valid_rows_imported"] == 2
+    assert data["account"] == "Chase Checking"
+
+def test_post_reconcile():
+    response = client.post("/api/reconcile")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "total_unified_transactions" in data
+
+

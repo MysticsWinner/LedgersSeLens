@@ -1,10 +1,9 @@
-import sqlite3
 import shutil
 import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QLineEdit, QFileDialog, QMessageBox)
 from PyQt6.QtCore import Qt
-from database.db_manager import get_connection
+from database.db_manager import get_transaction_by_id, update_transaction_details
 
 class TransactionDetailDialog(QDialog):
     def __init__(self, tx_id, parent=None):
@@ -18,12 +17,8 @@ class TransactionDetailDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Fetch data
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute('SELECT date, description, amount, category_name, account_name, notes, receipt_path FROM transactions WHERE id=?', (self.tx_id,))
-        row = c.fetchone()
-        conn.close()
+        # Fetch data via database manager abstraction
+        row = get_transaction_by_id(self.tx_id)
         
         if not row:
             QMessageBox.critical(self, "Error", "Transaction not found.")
@@ -64,7 +59,7 @@ class TransactionDetailDialog(QDialog):
         layout.addWidget(btn_save)
 
     def attach_receipt(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Receipt Image", "", "Images (*.png *.jpg *.jpeg);;PDF Files (*.pdf)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Receipt Image", "", "Images (*.png *.jpg *.jpeg *.tiff *.bmp *.webp);;PDF Files (*.pdf);;All Files (*.*)")
         if file_path:
             os.makedirs('receipts', exist_ok=True)
             filename = os.path.basename(file_path)
@@ -78,9 +73,5 @@ class TransactionDetailDialog(QDialog):
 
     def save_details(self):
         notes = self.txt_notes.text().strip()
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute('UPDATE transactions SET notes=?, receipt_path=? WHERE id=?', (notes, self.receipt_path, self.tx_id))
-        conn.commit()
-        conn.close()
+        update_transaction_details(self.tx_id, notes, self.receipt_path)
         self.accept()

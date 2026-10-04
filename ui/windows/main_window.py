@@ -42,6 +42,11 @@ class MainWindow(QMainWindow):
         
         top_bar.addStretch()
 
+        self.btn_status = QPushButton("System Status")
+        self.btn_status.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_status.clicked.connect(self.open_system_status)
+        top_bar.addWidget(self.btn_status, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self.btn_settings = QPushButton("Settings")
         self.btn_settings.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_settings.clicked.connect(self.open_settings)
@@ -56,6 +61,21 @@ class MainWindow(QMainWindow):
         self.btn_upload.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_upload.clicked.connect(self.import_statement)
         top_bar.addWidget(self.btn_upload, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.btn_ocr = QPushButton("Scan Receipt (OCR)")
+        self.btn_ocr.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_ocr.clicked.connect(self.scan_receipt_ocr)
+        top_bar.addWidget(self.btn_ocr, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.btn_plaid = QPushButton("Sync Plaid")
+        self.btn_plaid.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_plaid.clicked.connect(self.sync_plaid)
+        top_bar.addWidget(self.btn_plaid, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.btn_sync = QPushButton("Sync & Reconcile")
+        self.btn_sync.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_sync.clicked.connect(self.reconcile_data)
+        top_bar.addWidget(self.btn_sync, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # Account Filter
         self.cb_account = QComboBox()
@@ -151,6 +171,17 @@ class MainWindow(QMainWindow):
         self.tree_categories.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tree_categories.itemDoubleClicked.connect(self.on_tree_double_clicked)
         self.data_tabs.addTab(self.tree_categories, "Category Breakdown")
+
+        # Subscriptions Area
+        self.table_subs = QTableWidget()
+        self.table_subs.setColumnCount(4)
+        self.table_subs.setHorizontalHeaderLabels(["Subscription / Service", "Amount", "Frequency", "Last Charged"])
+        self.table_subs.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table_subs.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table_subs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_subs.setShowGrid(False)
+        self.table_subs.verticalHeader().setVisible(False)
+        self.data_tabs.addTab(self.table_subs, "Subscriptions & Recurring")
         
         # Build Docks
         self.pie_dock = QDockWidget("Category Breakdown", self.dock_manager)
@@ -249,6 +280,11 @@ class MainWindow(QMainWindow):
             if dlg.exec():
                 self.load_historical_data()
 
+    def open_system_status(self):
+        from ui.dialogs.system_status_dialog import SystemStatusDialog
+        dlg = SystemStatusDialog(self)
+        dlg.exec()
+
     def open_settings(self):
         dlg = SettingsDialog(self)
         if dlg.exec():
@@ -272,7 +308,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.btn_export.mapToGlobal(self.btn_export.rect().bottomLeft()))
 
     def save_export(self, format_type):
-        from export_utils import export_to_csv, export_to_excel, export_to_pdf
+        from utils.export_utils import export_to_csv, export_to_excel, export_to_pdf
         
         filters = {
             'csv': "CSV Files (*.csv)",
@@ -298,8 +334,81 @@ class MainWindow(QMainWindow):
                 self.lbl_status.setText(f"Export failed: {e}")
                 self.lbl_status.setStyleSheet("color: #ff453a;")
 
+    def reconcile_data(self):
+        from database.db_manager import reconcile_and_sync_all
+        self.lbl_status.setText("Reconciling historical and local data...")
+        self.lbl_status.setStyleSheet("color: #0a84ff;")
+        QApplication.processEvents()
+        
+        try:
+            res = reconcile_and_sync_all()
+            self.load_historical_data()
+            if res.get("synced"):
+                self.lbl_status.setText(f"Synced: {res.get('pushed_to_remote', 0)} pushed, {res.get('pulled_to_local', 0)} pulled. Total: {res.get('total_unified_transactions', 0)}")
+                self.lbl_status.setStyleSheet("color: #30d158;")
+            else:
+                self.lbl_status.setText("Offline mode: Local and fallback data unified.")
+                self.lbl_status.setStyleSheet("color: #ffd60a;")
+        except Exception as e:
+            self.lbl_status.setText(f"Reconciliation error: {e}")
+            self.lbl_status.setStyleSheet("color: #ff453a;")
+
+    def scan_receipt_ocr(self):
+        import os
+        from core.ocr_engine import parse_receipt
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Receipt or Scanned Statement", "", 
+            "Images & Scanned Statements (*.png *.jpg *.jpeg *.tiff *.bmp *.pdf);;All Files (*.*)"
+        )
+        if file_path:
+            self.lbl_status.setText(f"Scanning via OCR: {os.path.basename(file_path)}...")
+            self.lbl_status.setStyleSheet("color: #0a84ff;")
+            QApplication.processEvents()
+            try:
+                parsed = parse_receipt(file_path)
+                account_name, ok = QInputDialog.getText(
+                    self, "Confirm Receipt Ingestion", 
+                    f"Merchant: {parsed['description']}\nDate: {parsed['date']}\nAmount: ${abs(parsed['amount']):.2f}\nCategory: {parsed['category']}\n\nEnter Account Name:",
+                    Qt.EchoMode.Normal, "Main Account"
+                )
+                if ok and account_name.strip():
+                    from database.db_manager import save_transaction
+                    save_transaction(
+                        parsed['date'], parsed['description'], parsed['amount'],
+                        parsed['category'], account_name.strip(), notes=parsed.get('notes', ''), receipt_path=file_path
+                    )
+                    self.load_historical_data()
+                    self.lbl_status.setText(f"OCR Parsed: {parsed['description']} (${abs(parsed['amount']):.2f}) saved to {account_name.strip()}")
+                    self.lbl_status.setStyleSheet("color: #30d158;")
+            except Exception as e:
+                self.lbl_status.setText(f"OCR Error: {e}")
+                self.lbl_status.setStyleSheet("color: #ff453a;")
+
+    def sync_plaid(self):
+        self.lbl_status.setText("Syncing Plaid Sandbox Accounts...")
+        self.lbl_status.setStyleSheet("color: #0a84ff;")
+        QApplication.processEvents()
+        try:
+            import datetime
+            from database.db_manager import save_transaction
+            today = datetime.datetime.now().strftime('%Y-%m-%d')
+            mock_plaid_data = [
+                {"date": today, "desc": "AMAZON WEB SERVICES", "amount": -15.42, "category": "Payment: Subscription", "acct": "Chase Checking"},
+                {"date": today, "desc": "PAYROLL DIRECT DEPOSIT", "amount": 2500.00, "category": "Income", "acct": "Wells Fargo"},
+                {"date": today, "desc": "UBER TRIP SF", "amount": -22.50, "category": "Transport", "acct": "Amex Platinum"},
+                {"date": today, "desc": "STARBUCKS STORE", "amount": -6.75, "category": "Food", "acct": "Citi Double Cash"}
+            ]
+            for tx in mock_plaid_data:
+                save_transaction(tx['date'], tx['desc'], tx['amount'], tx['category'], tx['acct'])
+            self.load_historical_data()
+            self.lbl_status.setText(f"Plaid Sync complete: {len(mock_plaid_data)} transactions imported.")
+            self.lbl_status.setStyleSheet("color: #30d158;")
+        except Exception as e:
+            self.lbl_status.setText(f"Plaid Sync failed: {e}")
+            self.lbl_status.setStyleSheet("color: #ff453a;")
+
     def import_statement(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Bank Statement", "", "Supported Files (*.pdf *.csv);;PDF Files (*.pdf);;CSV Files (*.csv)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Bank Statement or Receipt", "", "All Supported Files (*.pdf *.csv *.tsv *.xlsx *.xls *.png *.jpg *.jpeg);;PDF Files (*.pdf);;Excel Spreadsheets (*.xlsx *.xls);;CSV Statements (*.csv *.tsv);;Receipt Images (*.png *.jpg *.jpeg);;All Files (*.*)")
         if file_path:
             account_name, ok = QInputDialog.getText(self, "Account Route", "Enter the account name for these transactions (e.g. Checking, Credit Card):", Qt.EchoMode.Normal, "Main Account")
             if not ok or not account_name.strip():
@@ -324,6 +433,7 @@ class MainWindow(QMainWindow):
             self.lbl_spent.setText("$0.00")
             self.lbl_net.setText("$0.00")
             self.table.setRowCount(0)
+            self.table_subs.setRowCount(0)
             self.tree_categories.clear()
             self.pie_canvas.axes.clear()
             self.pie_canvas.draw()
@@ -423,6 +533,27 @@ class MainWindow(QMainWindow):
                     child.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     
             self.tree_categories.expandAll()
+
+        # Update Subscriptions & Recurring Table
+        from core.analyzer import detect_subscriptions
+        subs = detect_subscriptions(df) if not df.empty else []
+        self.table_subs.setRowCount(len(subs))
+        for s_idx, sub in enumerate(subs):
+            svc_item = QTableWidgetItem(str(sub['description']).title())
+            self.table_subs.setItem(s_idx, 0, svc_item)
+            
+            amt_item = QTableWidgetItem(f"${abs(sub['amount']):,.2f}")
+            amt_item.setForeground(QColor('#ff453a'))
+            amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table_subs.setItem(s_idx, 1, amt_item)
+            
+            freq_item = QTableWidgetItem(f"{sub['frequency']} (~{sub['avg_days_between']}d)")
+            freq_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table_subs.setItem(s_idx, 2, freq_item)
+            
+            date_item = QTableWidgetItem(str(sub['last_charged']))
+            date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table_subs.setItem(s_idx, 3, date_item)
 
         # Update Pie Chart (Categories)
         self.pie_canvas.axes.clear()

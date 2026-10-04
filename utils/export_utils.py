@@ -71,11 +71,8 @@ def export_to_pdf(filepath):
     doc.build(elements)
 
 def _get_data():
-    rows = get_all_transactions()
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows, columns=['Date', 'Description', 'Amount', 'Category'])
-    df['Date'] = pd.to_datetime(df['Date'])
-    df['Amount'] = df['Amount'].astype(float)
-    df = df.sort_values(by='Date', ascending=False)
+    from core.analyzer import load_all_transactions_df
+    df = load_all_transactions_df()
+    if df.empty:
+        return pd.DataFrame(columns=['Date', 'Description', 'Amount', 'Category', 'Account', 'Notes'])
     return df

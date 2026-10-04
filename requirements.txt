@@ -1,6 +1,7 @@
 PyQt6
 pandas
 pdfplumber
+pypdfium2
 matplotlib
 reportlab
 openpyxl
@@ -15,5 +16,7 @@ psycopg2-binary
 redis
 kazoo
 kafka-python
-pytest
-
+pytesseract
+pillow
+python-dateutil
+python-multipart
