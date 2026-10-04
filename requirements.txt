@@ -11,3 +11,9 @@ plyer
 plaid-python
 pytest
 httpx
+psycopg2-binary
+redis
+kazoo
+kafka-python
+pytest
+
