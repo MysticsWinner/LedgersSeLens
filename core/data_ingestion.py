@@ -17,7 +17,12 @@ from datetime import datetime
 from dateutil import parser as date_parser
 
 from core.payment_categorizer import classify_payment, ALL_DEFAULT_CATEGORIES
-from core.ocr_engine import parse_receipt, extract_text_from_pdf_pages_ocr, is_tesseract_available
+from core.ocr_engine import (
+    parse_receipt,
+    extract_text_from_pdf_pages_ocr,
+    extract_structured_table_from_pdf_ocr,
+    is_tesseract_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +30,10 @@ logger = logging.getLogger(__name__)
 SYNONYMS_DATE = {'date', 'trans date', 'transaction date', 'post date', 'posting date', 'value date', 'time', 'day', 'txn date', 'trx date'}
 SYNONYMS_DESC = {'description', 'desc', 'payee', 'merchant', 'details', 'particulars', 'narration', 'memo', 'name', 'transaction details', 'item', 'vendor'}
 SYNONYMS_AMOUNT = {'amount', 'total', 'net', 'transaction amount', 'sum', 'amt', 'value'}
-SYNONYMS_DEBIT = {'debit', 'withdrawal', 'outflow', 'dr', 'expense', 'paid out', 'charge', 'debit amount'}
-SYNONYMS_CREDIT = {'credit', 'deposit', 'inflow', 'cr', 'income', 'paid in', 'credit amount'}
+SYNONYMS_DEBIT = {'debit', 'withdrawal', 'outflow', 'dr', 'expense', 'paid out', 'charge', 'debit amount', 'withdrawal amount'}
+SYNONYMS_CREDIT = {'credit', 'deposit', 'inflow', 'cr', 'income', 'paid in', 'credit amount', 'deposit amount'}
 SYNONYMS_CATEGORY = {'category', 'cat', 'tag', 'type', 'classification'}
-SYNONYMS_NOTES = {'notes', 'note', 'comment', 'memo', 'reference', 'ref', 'check number', 'check no'}
+SYNONYMS_NOTES = {'notes', 'note', 'comment', 'memo', 'reference', 'ref', 'check number', 'check no', 'chq  ref no', 'chq ref no', 'chq  refn0', 'ref no'}
 SYNONYMS_ACCOUNT = {'account', 'account name', 'account number', 'acct'}
 
 @dataclass
@@ -104,7 +109,7 @@ def clean_currency_string(val: Any) -> Optional[float]:
     except ValueError:
         return None
 
-def robust_parse_date(val: Any) -> Optional[str]:
+def robust_parse_date(val: Any, dayfirst: bool = False) -> Optional[str]:
     """
     Attempts multiple parsing strategies to convert messy dates into ISO 'YYYY-MM-DD'.
     """
@@ -118,8 +123,13 @@ def robust_parse_date(val: Any) -> Optional[str]:
     if not s or s.lower() in ('nan', 'none', 'null'):
         return None
 
-    # Fast path: common formats
-    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y.%m.%d', '%m/%d/%y', '%d/%m/%y'):
+    # Fast path: common formats (prioritizing DD/MM when dayfirst=True)
+    if dayfirst:
+        fmts = ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y', '%d/%m/%y', '%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%Y.%m.%d', '%m/%d/%y')
+    else:
+        fmts = ('%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y.%m.%d', '%m/%d/%y', '%d/%m/%y')
+
+    for fmt in fmts:
         try:
             return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
         except ValueError:
@@ -127,7 +137,7 @@ def robust_parse_date(val: Any) -> Optional[str]:
 
     # Dateutil fuzzy fallback
     try:
-        dt = date_parser.parse(s, fuzzy=True)
+        dt = date_parser.parse(s, fuzzy=True, dayfirst=dayfirst)
         return dt.strftime('%Y-%m-%d')
     except Exception:
         return None
@@ -154,7 +164,7 @@ def map_dataframe_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str
     for col, norm in col_norm_map.items():
         if col in mapping.values():
             continue
-        if norm in SYNONYMS_DESC or any(s in norm for s in ['desc', 'payee', 'merchant', 'particulars', 'detail', 'memo']):
+        if norm in SYNONYMS_DESC or any(s in norm for s in ['desc', 'payee', 'merchant', 'particulars', 'detail', 'memo', 'narration']):
             mapping['Description'] = col
             break
 
@@ -183,7 +193,7 @@ def map_dataframe_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str
             continue
         if norm in SYNONYMS_CATEGORY:
             mapping['Category'] = col
-        elif norm in SYNONYMS_NOTES:
+        elif norm in SYNONYMS_NOTES or any(s in norm for s in ['ref', 'chq', 'check', 'note']):
             mapping['Notes'] = col
         elif norm in SYNONYMS_ACCOUNT:
             mapping['Account'] = col
@@ -329,65 +339,101 @@ def ingest_excel(file_path_or_bytes: Union[str, bytes], account_name: str = "Mai
 def ingest_pdf(file_path: str, account_name: str = "Main Account") -> IngestionResult:
     """
     Multi-tier parser for PDF bank statements:
-      1. pdfplumber structured table extraction
+      1. Fast digital-text check via pypdfium2 + pdfplumber structured table extraction
       2. pdfplumber text line regex extraction
-      3. OCR rasterization fallback for scanned statements
+      3. OCR structured table grid & rasterization fallback for vector-outlined / scanned statements
     """
     result = IngestionResult(dataframe=pd.DataFrame(), file_type="pdf")
     extracted_rows: List[Dict[str, Any]] = []
 
     try:
-        import pdfplumber
         has_digital_text = False
+        # Fast pre-check via pypdfium2 to avoid slow pdfplumber curve parsing on vector-outlined PDFs
+        try:
+            import pypdfium2 as pdfium
+            pdf_doc = pdfium.PdfDocument(file_path)
+            for i in range(min(len(pdf_doc), 5)):
+                if len(pdf_doc[i].get_textpage().get_text_range().strip()) > 10:
+                    has_digital_text = True
+                    break
+        except Exception:
+            has_digital_text = True  # Fallback to pdfplumber inspection if pypdfium2 check fails
 
-        with pdfplumber.open(file_path) as pdf:
-            # Tier 1: Structured Table Extraction
-            for page_idx, page in enumerate(pdf.pages):
-                tables = page.extract_tables()
-                if tables:
-                    for table in tables:
-                        if not table or len(table) < 2:
-                            continue
-                        
-                        has_digital_text = True
-                        # Map table headers
-                        headers = [str(col).strip() if col else f"col_{c}" for c, col in enumerate(table[0])]
-                        for row in table[1:]:
-                            if len(row) < 3:
+        if has_digital_text:
+            import pdfplumber
+            active_headers: Optional[List[str]] = None
+            with pdfplumber.open(file_path) as pdf:
+                # Tier 1: Structured Table Extraction
+                for page_idx, page in enumerate(pdf.pages):
+                    tables = page.extract_tables()
+                    if tables:
+                        for table in tables:
+                            if not table or len(table) < 2:
                                 continue
-                            extracted_rows.append(dict(zip(headers, row)))
+                            # Check that the table actually contains non-empty text
+                            non_empty_cells = sum(
+                                1 for r in table for cell in r if cell and str(cell).strip()
+                            )
+                            if non_empty_cells == 0:
+                                continue
 
-                # Tier 2: Text Layout Extraction if tables were sparse
-                if not extracted_rows:
-                    text = page.extract_text()
-                    if text and text.strip():
-                        has_digital_text = True
-                        for line in text.splitlines():
-                            # Pattern: Date Description Amount [Balance]
-                            match = re.search(r'(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\s+(.*?)\s+([$-]?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?)', line)
-                            if match:
-                                d_str, desc_str, amt_str = match.groups()
-                                extracted_rows.append({
-                                    'Date': d_str,
-                                    'Description': desc_str.strip(),
-                                    'Amount': amt_str
-                                })
+                            first_row = [str(col).strip() if col else "" for col in table[0]]
+                            first_norm = normalize_column_name(first_row[0]) if first_row else ""
+                            is_header = (
+                                first_norm in SYNONYMS_DATE
+                                or 'date' in first_norm
+                                or active_headers is None
+                            )
+                            if is_header:
+                                active_headers = [
+                                    col if col else f"col_{c}" for c, col in enumerate(first_row)
+                                ]
+                                data_rows = table[1:]
+                            else:
+                                data_rows = table
 
-        # Tier 3: OCR Fallback if no digital text or tables were found
-        if not extracted_rows and not has_digital_text:
-            logger.info("PDF has no digital text layer. Engaging OCR rasterization pipeline.")
+                            for row in data_rows:
+                                if len(row) < 3 or not any(cell and str(cell).strip() for cell in row):
+                                    continue
+                                extracted_rows.append(dict(zip(active_headers, row)))
+
+                    # Tier 2: Text Layout Extraction if tables were sparse
+                    if not extracted_rows:
+                        text = page.extract_text()
+                        if text and text.strip():
+                            for line in text.splitlines():
+                                # Pattern: Date Description Amount [Balance]
+                                match = re.search(r'(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\s+(.*?)\s+([$-]?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?)', line)
+                                if match:
+                                    d_str, desc_str, amt_str = match.groups()
+                                    extracted_rows.append({
+                                        'Date': d_str,
+                                        'Description': desc_str.strip(),
+                                        'Amount': amt_str
+                                    })
+
+        # Tier 3: OCR Fallback if no digital text or no rows were extracted
+        if not extracted_rows:
+            logger.info("PDF has no extractable digital text layer. Engaging OCR rasterization pipeline.")
             result.warnings.append("No digital text found; engaged OCR rasterization engine.")
-            ocr_pages = extract_text_from_pdf_pages_ocr(file_path)
-            for page_text in ocr_pages:
-                for line in page_text.splitlines():
-                    match = re.search(r'(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\s+(.*?)\s+([$-]?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?)', line)
-                    if match:
-                        d_str, desc_str, amt_str = match.groups()
-                        extracted_rows.append({
-                            'Date': d_str,
-                            'Description': desc_str.strip(),
-                            'Amount': amt_str
-                        })
+
+            # Tier 3A: Structured Table Grid + Word Bounding Box OCR
+            structured_ocr_rows = extract_structured_table_from_pdf_ocr(file_path)
+            if structured_ocr_rows:
+                extracted_rows.extend(structured_ocr_rows)
+            else:
+                # Tier 3B: Line-level Regex OCR Fallback
+                ocr_pages = extract_text_from_pdf_pages_ocr(file_path)
+                for page_text in ocr_pages:
+                    for line in page_text.splitlines():
+                        match = re.search(r'(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\s+(.*?)\s+([$-]?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?)', line)
+                        if match:
+                            d_str, desc_str, amt_str = match.groups()
+                            extracted_rows.append({
+                                'Date': d_str,
+                                'Description': desc_str.strip(),
+                                'Amount': amt_str
+                            })
 
     except Exception as e:
         result.errors.append(f"PDF parsing error: {e}")
@@ -445,12 +491,28 @@ def process_raw_dataframe(df_raw: pd.DataFrame, account_name: str, result: Inges
         result.is_success = False
         return result
 
+    # Auto-detect DD/MM/YYYY vs MM/DD/YYYY across the Date column
+    dayfirst = False
+    date_col = mapping['Date']
+    dd_mm_evidence = 0
+    mm_dd_evidence = 0
+    for raw_d in df[date_col].dropna():
+        m = re.match(r'^\s*(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\s*$', str(raw_d))
+        if m:
+            p1, p2 = int(m.group(1)), int(m.group(2))
+            if p1 > 12 and p2 <= 12:
+                dd_mm_evidence += 1
+            elif p2 > 12 and p1 <= 12:
+                mm_dd_evidence += 1
+    if dd_mm_evidence > mm_dd_evidence:
+        dayfirst = True
+
     rows = []
     dropped_count = 0
 
     for _, row in df.iterrows():
         # Parse Date
-        date_val = robust_parse_date(row.get(mapping.get('Date')))
+        date_val = robust_parse_date(row.get(mapping.get('Date')), dayfirst=dayfirst)
         if not date_val:
             dropped_count += 1
             continue
@@ -471,8 +533,10 @@ def process_raw_dataframe(df_raw: pd.DataFrame, account_name: str, result: Inges
             
             if debit_val is not None and debit_val != 0:
                 amount_val = -abs(debit_val)
-            elif credit_val is not None:
+            elif credit_val is not None and credit_val != 0:
                 amount_val = abs(credit_val)
+            elif debit_val == 0 or credit_val == 0:
+                amount_val = 0.0
 
         if amount_val is None:
             dropped_count += 1

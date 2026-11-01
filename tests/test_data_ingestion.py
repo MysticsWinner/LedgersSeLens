@@ -219,3 +219,25 @@ def test_universal_ingest_file_dispatcher(tmp_path):
     res_missing = ingest_file("non_existent_file.xyz")
     assert res_missing.is_success is False
     assert len(res_missing.errors) > 0
+
+
+def test_real_pdf_statement_extraction():
+    pdf_path = os.path.join("data", "pdf", "test1.pdf")
+    if not os.path.exists(pdf_path):
+        pytest.skip("data/pdf/test1.pdf not present")
+
+    res = ingest_file(pdf_path, account_name="HDFC Bank")
+    assert res.is_success is True
+    assert res.total_rows == 99
+    assert res.valid_rows == 99
+    assert res.dropped_rows == 0
+
+    df = res.dataframe
+    debits = df[df["Amount"] < 0]
+    zero_rows = df[df["Amount"] == 0]
+    assert len(debits) == 75
+    assert len(zero_rows) == 24
+    assert round(abs(debits["Amount"].sum()), 2) == 48771.58
+    assert df["Date"].min().strftime("%Y-%m-%d") == "2026-09-22"
+    assert df["Date"].max().strftime("%Y-%m-%d") == "2026-10-21"
+

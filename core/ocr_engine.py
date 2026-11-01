@@ -7,10 +7,14 @@ and heuristic fallback parsing.
 
 import os
 import re
+import json
 import shutil
+import tempfile
+import subprocess
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
+import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
 logger = logging.getLogger(__name__)
@@ -118,9 +122,323 @@ def extract_text_from_image(image_input) -> Tuple[str, str]:
         except Exception as e:
             logger.warning(f"Tesseract execution error: {e}. Falling back to heuristic extractor.")
 
+    # Attempt Tesseract OCR if available
+    if is_tesseract_available():
+        try:
+            import pytesseract
+            processed = preprocess_image_for_ocr(img)
+            text = pytesseract.image_to_string(processed)
+            if text and text.strip():
+                return text.strip(), "tesseract"
+        except Exception as e:
+            logger.warning(f"Tesseract execution error: {e}. Falling back to Windows/heuristic extractor.")
+
+    # Attempt native Windows Media OCR on Windows hosts
+    if os.name == 'nt':
+        try:
+            batch_res = _run_windows_media_ocr_batch([img], clean_masks=False)
+            if batch_res and batch_res[0].get("text", "").strip():
+                return batch_res[0]["text"].strip(), "windows_ocr"
+        except Exception as e:
+            logger.debug(f"Windows Media OCR skipped: {e}")
+
     # Heuristic / Metadata Fallback when OCR binary is missing or fails
     fallback_text = _extract_image_heuristic_text(img, image_input if isinstance(image_input, str) else "")
     return fallback_text, "heuristic_fallback"
+
+
+def _clean_asterisk_masks(gray_arr: np.ndarray) -> np.ndarray:
+    """
+    Removes horizontal chains of 4+ consecutive identical asterisk glyphs ('****')
+    from rendered statement images so OCR word tokenizers do not discard masked
+    UPI/card tokens (e.g., 'UPI-SURAJ-*********BZZ6@PTY' -> 'UPI-SURAJ- BZZ6@PTY').
+    """
+    try:
+        from scipy import ndimage
+        binary = gray_arr < 180
+        labeled, _ = ndimage.label(binary)
+        objs = ndimage.find_objects(labeled)
+
+        candidates = []
+        for sl in objs:
+            if sl is None:
+                continue
+            ys, xs = sl
+            h = ys.stop - ys.start
+            w = xs.stop - xs.start
+            if 10 <= w <= 15 and 11 <= h <= 15:
+                candidates.append((ys.start, ys.stop, xs.start, xs.stop))
+
+        if len(candidates) < 4:
+            return gray_arr
+
+        # Group candidates by line (y0 within 3px), then sort each line by x0
+        candidates.sort(key=lambda c: c[0])
+        line_groups: List[List[Tuple[int, int, int, int]]] = []
+        for c in candidates:
+            if not line_groups or abs(c[0] - line_groups[-1][-1][0]) > 3:
+                line_groups.append([c])
+            else:
+                line_groups[-1].append(c)
+
+        to_erase = []
+        for grp in line_groups:
+            grp.sort(key=lambda c: c[2])
+            chain = [grp[0]]
+            for cur in grp[1:]:
+                prev = chain[-1]
+                if 1 <= (cur[2] - prev[3]) <= 8 and abs(cur[1] - prev[1]) <= 3:
+                    chain.append(cur)
+                else:
+                    if len(chain) >= 4:
+                        to_erase.extend(chain)
+                    chain = [cur]
+            if len(chain) >= 4:
+                to_erase.extend(chain)
+
+        if not to_erase:
+            return gray_arr
+
+        out = gray_arr.copy()
+        for y0, y1, x0, x1 in to_erase:
+            out[max(0, y0 - 1):min(out.shape[0], y1 + 1), max(0, x0 - 1):min(out.shape[1], x1 + 1)] = 255
+        return out
+    except Exception:
+        return gray_arr
+
+
+_WIN_OCR_PS_SCRIPT = r"""
+param([string[]]$ImagePaths, [string]$OutFile)
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]
+$null = [Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
+$null = [Windows.Graphics.Imaging.BitmapDecoder,Windows.Foundation,ContentType=WindowsRuntime]
+
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+})[0]
+
+function Await($WinRtTask, $ResultType) {
+    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+    $netTask = $asTask.Invoke($null, @($WinRtTask))
+    $netTask.Wait(-1) | Out-Null
+    return $netTask.Result
+}
+
+$ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if (-not $ocrEngine) {
+    $lang = [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages[0]
+    $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+}
+
+$allPages = @()
+foreach ($path in $ImagePaths) {
+    $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+    $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $result = Await ($ocrEngine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    
+    $words = @()
+    $lineStrings = @()
+    foreach ($line in $result.Lines) {
+        $lineStrings += $line.Text
+        foreach ($w in $line.Words) {
+            $r = $w.BoundingRect
+            $words += @{
+                t = $w.Text
+                x = [math]::Round($r.X, 1)
+                y = [math]::Round($r.Y, 1)
+                w = [math]::Round($r.Width, 1)
+                h = [math]::Round($r.Height, 1)
+            }
+        }
+    }
+    $allPages += ,@{
+        text = ($lineStrings -join "`n")
+        words = $words
+    }
+    $stream.Dispose()
+}
+$jsonStr = ConvertTo-Json -InputObject @($allPages) -Depth 5 -Compress
+[System.IO.File]::WriteAllText($OutFile, $jsonStr, [System.Text.Encoding]::UTF8)
+"""
+
+
+def _run_windows_media_ocr_batch(images: List[Image.Image], clean_masks: bool = True) -> List[Dict[str, Any]]:
+    """
+    Executes Windows built-in WinRT Optical Character Recognition in batch
+    across a list of PIL Images, returning text and word bounding boxes per page.
+    """
+    if os.name != 'nt' or not images:
+        return []
+
+    tmpdir = tempfile.mkdtemp(prefix="ledgerselens_ocr_")
+    try:
+        img_paths = []
+        for idx, img in enumerate(images):
+            gray = img.convert("L")
+            if clean_masks:
+                arr = _clean_asterisk_masks(np.array(gray))
+                gray = Image.fromarray(arr)
+            elif gray.width < 1000:
+                gray = gray.resize((gray.width * 3, gray.height * 3), Image.Resampling.BICUBIC)
+            p = os.path.join(tmpdir, f"page_{idx}.png")
+            gray.save(p)
+            img_paths.append(p)
+
+        ps_file = os.path.join(tmpdir, "run_ocr.ps1")
+        out_json = os.path.join(tmpdir, "ocr_out.json")
+        with open(ps_file, "w", encoding="utf-8") as f:
+            f.write(_WIN_OCR_PS_SCRIPT)
+
+        paths_arg = ",".join(f"'{p}'" for p in img_paths)
+        proc = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-Command", f"& '{ps_file}' -ImagePaths @({paths_arg}) -OutFile '{out_json}'"
+            ],
+            capture_output=True, text=True, encoding="utf-8", timeout=60
+        )
+        if proc.returncode != 0 or not os.path.exists(out_json):
+            return []
+
+        with open(out_json, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+
+        if isinstance(data, dict):
+            return [data]
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        logger.debug(f"Windows batch OCR error: {e}")
+        return []
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def extract_structured_table_from_pdf_ocr(pdf_path: str, max_pages: int = 20) -> List[Dict[str, Any]]:
+    """
+    Renders vector-outlined or scanned PDF bank statements at 300 DPI, detects
+    table grid lines (horizontal & vertical rules) using pixel projections, and
+    reconstructs multi-page structured table rows using OCR word bounding boxes.
+    """
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(pdf_path)
+        num_pages = min(len(pdf), max_pages)
+        pil_images = [pdf[i].render(scale=300 / 72.0).to_pil() for i in range(num_pages)]
+    except Exception as e:
+        logger.debug(f"PDF rendering for structured OCR failed: {e}")
+        return []
+
+    ocr_pages = _run_windows_media_ocr_batch(pil_images, clean_masks=True)
+    if not ocr_pages or len(ocr_pages) != len(pil_images):
+        return []
+
+    extracted_rows: List[Dict[str, Any]] = []
+    active_headers: Optional[List[str]] = None
+
+    for page_idx, (pil_img, page_ocr) in enumerate(zip(pil_images, ocr_pages)):
+        words = page_ocr.get("words", [])
+        if not words:
+            continue
+
+        arr = np.array(pil_img.convert("L"))
+        height, width = arr.shape
+
+        # Detect horizontal table grid lines across the page width
+        x_start, x_end = int(width * 0.015), int(width * 0.96)
+        row_dark = (arr[:, x_start:x_end] < 150).mean(axis=1)
+        h_candidates = np.where(row_dark > 0.65)[0]
+
+        h_lines: List[int] = []
+        for y in h_candidates:
+            if not h_lines or y - h_lines[-1] > 8:
+                h_lines.append(int(y))
+
+        # Filter to the main transaction table (skipping upper address box if present)
+        # Group consecutive h_lines where spacing is < 250px (table rows)
+        best_group: List[int] = []
+        cur_group: List[int] = []
+        for y in h_lines:
+            if not cur_group or (y - cur_group[-1] <= 260):
+                cur_group.append(y)
+            else:
+                if len(cur_group) >= len(best_group):
+                    best_group = cur_group
+                cur_group = [y]
+        if len(cur_group) >= len(best_group):
+            best_group = cur_group
+
+        h_lines = best_group
+        if len(h_lines) < 2:
+            continue
+
+        y0, y1 = h_lines[0], h_lines[-1]
+        if y1 - y0 < 30:
+            continue
+
+        # Detect vertical column grid lines within the table's vertical span
+        col_dark = (arr[y0:y1, :] < 150).mean(axis=0)
+        v_candidates = np.where(col_dark > 0.65)[0]
+        v_lines: List[int] = []
+        for x in v_candidates:
+            if not v_lines or x - v_lines[-1] > 15:
+                v_lines.append(int(x))
+
+        if len(v_lines) < 3:
+            continue
+
+        for r_idx in range(len(h_lines) - 1):
+            ry0, ry1 = h_lines[r_idx], h_lines[r_idx + 1]
+            if ry1 - ry0 < 18:
+                continue
+
+            row_words = [
+                w for w in words
+                if ry0 - 5 <= (w["y"] + w["h"] / 2.0) <= ry1 + 5
+            ]
+            if not row_words:
+                continue
+
+            cells: List[str] = []
+            for c_idx in range(len(v_lines) - 1):
+                cx0, cx1 = v_lines[c_idx], v_lines[c_idx + 1]
+                c_words = [
+                    w for w in row_words
+                    if cx0 - 6 <= (w["x"] + w["w"] / 2.0) <= cx1 + 6
+                ]
+                c_words.sort(key=lambda w: (round(w["y"] / 18.0), w["x"]))
+                cell_text = " ".join(str(w["t"]) for w in c_words).strip()
+                cells.append(cell_text)
+
+            if not any(cells):
+                continue
+
+            # Check if this row is a table header row
+            first_cell_norm = re.sub(r'[^a-z]', '', cells[0].lower())
+            second_cell_norm = re.sub(r'[^a-z]', '', cells[1].lower()) if len(cells) > 1 else ""
+            if first_cell_norm in ('date', 'txndate', 'transdate', 'postdate') or second_cell_norm in ('narration', 'description', 'particulars', 'details'):
+                active_headers = [c if c else f"col_{i}" for i, c in enumerate(cells)]
+                continue
+
+            if active_headers is None:
+                # Default standard 5-column bank statement layout if header wasn't on page 1
+                if len(cells) == 5:
+                    active_headers = ['Date', 'Narration', 'Chq. / Ref No.', 'Value Date', 'Withdrawal Amount']
+                elif len(cells) >= 3:
+                    active_headers = ['Date', 'Description', 'Amount'] + [f"col_{i}" for i in range(3, len(cells))]
+                else:
+                    active_headers = [f"col_{i}" for i in range(len(cells))]
+
+            # Align headers count with cells count
+            row_dict = {}
+            for c_idx, val in enumerate(cells):
+                col_name = active_headers[c_idx] if c_idx < len(active_headers) else f"col_{c_idx}"
+                row_dict[col_name] = val
+            extracted_rows.append(row_dict)
+
+    return extracted_rows
 
 def _extract_image_heuristic_text(image: Image.Image, file_path: str = "") -> str:
     """

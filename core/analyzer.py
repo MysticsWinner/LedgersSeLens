@@ -56,7 +56,34 @@ def categorize_transaction(description: str, categories_cache: Optional[List[Dic
         if any(c['name'] == payment_category for c in categories_cache):
             return payment_category
 
-    # Tier 3: Machine Learning Model Fallback
+    # Tier 3: Heuristic Merchant Dictionary
+    ai_guesses = {
+        'doordash': 'Food', 'ubereats': 'Food', 'grubhub': 'Food', 'starbucks': 'Food',
+        'mcdonalds': 'Food', 'chipotle': 'Food', 'panera': 'Food', 'subway': 'Food',
+        'swiggy': 'Food', 'zomato': 'Food', 'blinkit': 'Food', 'roll express': 'Food',
+        'pan shop': 'Food', 'dinner': 'Food', 'mpg': 'Food',
+        'chevron': 'Transport', 'shell': 'Transport', 'arco': 'Transport', 'exxon': 'Transport',
+        'delta': 'Transport', 'american airlines': 'Transport', 'united airlines': 'Transport',
+        'uber': 'Transport', 'lyft': 'Transport', 'caltrain': 'Transport',
+        'filling stati': 'Transport', 'fuel': 'Transport', 'petrol': 'Transport',
+        'walmart': 'Shopping', 'target': 'Shopping', 'amazon': 'Shopping', 'costco': 'Shopping',
+        'best buy': 'Shopping', 'apple store': 'Shopping', 'home depot': 'Shopping',
+        'hospital': 'Healthcare', 'clinic': 'Healthcare', 'pharmacy': 'Healthcare', 'cvs': 'Healthcare', 'walgreens': 'Healthcare',
+        'comcast': 'Utilities', 'pg&e': 'Utilities', 'verizon': 'Utilities', 'at&t': 'Utilities', 'coned': 'Utilities',
+        'payroll': 'Income', 'direct deposit': 'Income', 'salary': 'Income', 'tax refund': 'Income',
+        'ach c-': 'Income', 'interest paid': 'Income', 'cash back': 'Income', 'fnldiv': 'Income', 'findiv': 'Income',
+        'netflix': 'Entertainment', 'spotify': 'Entertainment', 'hulu': 'Entertainment', 'steam': 'Entertainment',
+        'hoyoverse': 'Entertainment',
+        'venmo': 'Payment: Transfer & P2P', 'zelle': 'Payment: Transfer & P2P', 'paypal': 'Payment: Transfer & P2P',
+        'upi-': 'Payment: Transfer & P2P', 'neft': 'Payment: Transfer & P2P', 'ft - cr': 'Payment: Transfer & P2P',
+        'rd through mobile': 'Payment: Transfer & P2P', 'paytm': 'Payment: Transfer & P2P'
+    }
+    for key, val in ai_guesses.items():
+        if key in desc_lower:
+            if any(c['name'] == val for c in categories_cache):
+                return val
+
+    # Tier 4: Machine Learning Model Fallback
     try:
         from core.ml_engine import predict_category
         ml_pred = predict_category(desc_str)
@@ -65,26 +92,6 @@ def categorize_transaction(description: str, categories_cache: Optional[List[Dic
                 return ml_pred
     except Exception as e:
         logger.debug(f"ML categorization skipped: {e}")
-
-    # Tier 4: Heuristic Merchant Dictionary
-    ai_guesses = {
-        'doordash': 'Food', 'ubereats': 'Food', 'grubhub': 'Food', 'starbucks': 'Food',
-        'mcdonalds': 'Food', 'chipotle': 'Food', 'panera': 'Food', 'subway': 'Food',
-        'chevron': 'Transport', 'shell': 'Transport', 'arco': 'Transport', 'exxon': 'Transport',
-        'delta': 'Transport', 'american airlines': 'Transport', 'united airlines': 'Transport',
-        'uber': 'Transport', 'lyft': 'Transport', 'caltrain': 'Transport',
-        'walmart': 'Shopping', 'target': 'Shopping', 'amazon': 'Shopping', 'costco': 'Shopping',
-        'best buy': 'Shopping', 'apple store': 'Shopping', 'home depot': 'Shopping',
-        'hospital': 'Healthcare', 'clinic': 'Healthcare', 'pharmacy': 'Healthcare', 'cvs': 'Healthcare', 'walgreens': 'Healthcare',
-        'comcast': 'Utilities', 'pg&e': 'Utilities', 'verizon': 'Utilities', 'at&t': 'Utilities', 'coned': 'Utilities',
-        'payroll': 'Income', 'direct deposit': 'Income', 'salary': 'Income', 'tax refund': 'Income',
-        'netflix': 'Entertainment', 'spotify': 'Entertainment', 'hulu': 'Entertainment', 'steam': 'Entertainment',
-        'venmo': 'Payment: Transfer & P2P', 'zelle': 'Payment: Transfer & P2P', 'paypal': 'Payment: Transfer & P2P'
-    }
-    for key, val in ai_guesses.items():
-        if key in desc_lower:
-            if any(c['name'] == val for c in categories_cache):
-                return val
 
     # Tier 5: Safe Default
     return 'Other'

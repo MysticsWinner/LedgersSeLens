@@ -40,3 +40,7 @@ System Volume Information/
 # IDE & Editor
 .vscode/
 .idea/
+
+# Local Files for testing - May contain real data
+data/
+graphify-out/cache/

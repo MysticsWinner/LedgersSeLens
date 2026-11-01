@@ -133,6 +133,12 @@ def classify_payment(description: str, amount: Optional[float] = None) -> Option
             return 'Payment: Bill & Utility'
         return 'Payment: Transfer & P2P'
 
+    # 4. Subscription, Bill/Fee, Income, and UPI/NEFT Transfer patterns (after merchant-specific checks)
+    if re.search(r'\b(playstore|google\s*play|googleplay|microsoft|godaddy|torbox)\b', desc_lower):
+        return 'Payment: Subscription'
+    if re.search(r'\b(amb\s*chrg|instaalertchg|txn\s*markup)\b', desc_lower):
+        return 'Payment: Bill & Utility'
+
     return None
 
 def is_payment(description: str) -> bool:

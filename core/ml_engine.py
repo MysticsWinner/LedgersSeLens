@@ -62,6 +62,9 @@ def predict_category(description):
             
     try:
         with _model_lock:
+            vec = _model_cache.named_steps['countvectorizer'].transform([description])
+            if vec.nnz == 0:
+                return _fallback_default
             prediction = _model_cache.predict([description])[0]
         return prediction
     except Exception as e:
