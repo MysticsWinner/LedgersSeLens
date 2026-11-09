@@ -240,7 +240,7 @@ def run_status():
     print(f"Fallback Active:     {'YES (Offline resilience)' if db_manager.IS_FALLBACK_ACTIVE else 'No'}")
     print(f"Degraded Shards:     {'YES' if db_manager.CURRENTLY_DEGRADED else 'No'}")
     print(f"SQLite DB File:      {db_manager.DB_FILE}")
-    print(f"Total Transactions:  {len(db_manager.get_all_transactions())}")
+    print(f"Total Transactions:  {db_manager.get_transaction_count()}")
     print(f"Distinct Accounts:   {', '.join(db_manager.get_accounts()) or 'None'}")
     
     # OCR Engine

@@ -1,0 +1,58 @@
+name: LedgerSeLens CI & Scalability Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-and-verify-workflows:
+    name: Automated Test Suite & End-to-End Workflow Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest httpx openpyxl reportlab pdfplumber
+
+      - name: Run Full Pytest Suite (Unit, Integration, Reconciliation & Scalability DSA)
+        env:
+          FORCE_SQLITE: "1"
+        run: |
+          python -m pytest -v
+
+      - name: Verify All CLI & Orchestrator Workflows End-to-End
+        env:
+          FORCE_SQLITE: "1"
+          SQLITE_DB_FILE: "ci_verify.db"
+        run: |
+          python main.py status
+          python main.py plaid
+          python main.py mock-data --output ci_mock_stmt.pdf
+          python main.py ingest ci_mock_stmt.pdf --account "CI Checking"
+          python main.py ocr ci_mock_stmt.pdf
+          python main.py insights
+          python main.py transactions --limit 5
+          python main.py subscriptions
+          python main.py sync
+          python main.py export ci_export.csv --format csv
+          python main.py export ci_export.xlsx --format excel
+          python main.py export ci_export.pdf --format pdf
+          python cli.py insights
+          python cli.py transactions --limit 3
+          python cli.py sync
+          rm -f ci_verify.db ci_mock_stmt.pdf ci_export.csv ci_export.xlsx ci_export.pdf
+

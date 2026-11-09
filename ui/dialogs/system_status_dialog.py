@@ -89,7 +89,7 @@ class SystemStatusDialog(QDialog):
         """Probes cluster health and refreshes status labels."""
         has_pg = db_manager._probe_postgres()
         is_fallback = db_manager.IS_FALLBACK_ACTIVE or not has_pg
-        tx_count = len(db_manager.get_all_transactions())
+        tx_count = db_manager.get_transaction_count()
         accounts = db_manager.get_accounts()
         tess = is_tesseract_available()
         

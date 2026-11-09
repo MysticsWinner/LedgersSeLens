@@ -1,21 +1,24 @@
 """
 LedgerSeLens Bidirectional Synchronization & Reconciliation Manager
 Handles offline-first replication, forward replay, catch-up replication,
-and eventual consistency across Local SQLite and Multi-Shard PostgreSQL.
+and Merkle Tree anti-entropy convergence across Local SQLite and Multi-Shard PostgreSQL.
 
 Solves the 4-Phase Lifecycle:
   1. Primary online -> writes to shards
   2. Primary offline -> writes to local fallback store
   3. Isolated local execution -> continues accumulating local transactions
-  4. Full recovery -> Bidirectionally reconciles all historical and new data
-     without duplication, resolving any field conflicts.
+  4. Full recovery -> Computes (account, YYYY-MM) Merkle Trees and bidirectionally
+     reconciles only divergent buckets without duplication, resolving any field conflicts.
 """
 
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime
 
+from core.dsa_structures import MerkleTree
+
 logger = logging.getLogger(__name__)
+
 
 def _normalize_date_str(date_val: Any) -> str:
     """Converts diverse date representations to a canonical 'YYYY-MM-DD' string."""
@@ -26,6 +29,7 @@ def _normalize_date_str(date_val: Any) -> str:
     s = str(date_val).strip()
     return s[:10]
 
+
 def _build_tx_identity_key(date_val: Any, desc: Any, amount: Any, account_name: Any) -> Tuple[str, str, float, str]:
     """Generates an idempotent collision-resistant composite key for a transaction."""
     d = _normalize_date_str(date_val)
@@ -34,10 +38,18 @@ def _build_tx_identity_key(date_val: Any, desc: Any, amount: Any, account_name: 
     acct = str(account_name or 'Main Account').strip().lower()
     return (d, descr, amt, acct)
 
+
+def _bucket_key_for_tx(date_str: str, account_name: str) -> Tuple[str, str]:
+    acct_lower = str(account_name or 'Main Account').strip().lower()
+    ym = (date_str or '1970-01')[:7]
+    return (acct_lower, ym)
+
+
 def reconcile_and_sync() -> Dict[str, Any]:
     """
-    Performs full bidirectional data reconciliation between local SQLite
-    and all distributed PostgreSQL shards.
+    Performs bidirectional data reconciliation between local SQLite
+    and all distributed PostgreSQL shards using a Merkle Tree partitioned
+    by (account_name, YYYY-MM) buckets.
     """
     from database import db_manager
 
@@ -49,7 +61,8 @@ def reconcile_and_sync() -> Dict[str, Any]:
             "pushed_to_remote": 0,
             "pulled_to_local": 0,
             "conflicts_resolved": 0,
-            "total_unified_transactions": len(db_manager.get_all_transactions()),
+            "divergent_buckets_synced": 0,
+            "total_unified_transactions": db_manager.get_transaction_count(),
             "synced": False
         }
 
@@ -67,6 +80,7 @@ def reconcile_and_sync() -> Dict[str, Any]:
 
         remote_cats = {}
         for url in db_manager.SHARD_URLS:
+            conn = None
             try:
                 conn = db_manager.get_connection_for_url(url)
                 c = conn.cursor()
@@ -74,14 +88,16 @@ def reconcile_and_sync() -> Dict[str, Any]:
                 for r in c.fetchall():
                     if r[0] not in remote_cats:
                         remote_cats[r[0]] = {'color': r[1], 'match_rules': r[2], 'budget_limit': r[3]}
-                conn.close()
             except Exception:
                 continue
+            finally:
+                db_manager.release_connection(conn)
 
         # Push local categories to remote shards
         for cat_name, cat_data in local_cats.items():
             if cat_name not in remote_cats:
                 for url in db_manager.SHARD_URLS:
+                    conn = None
                     try:
                         conn = db_manager.get_connection_for_url(url)
                         c = conn.cursor()
@@ -90,9 +106,10 @@ def reconcile_and_sync() -> Dict[str, Any]:
                                   'INSERT INTO categories (name, color, match_rules, budget_limit) VALUES (%s, %s, %s, %s) ON CONFLICT (name) DO NOTHING'
                         c.execute(cat_sql, (cat_name, cat_data['color'], cat_data['match_rules'], cat_data['budget_limit']))
                         conn.commit()
-                        conn.close()
                     except Exception:
                         pass
+                    finally:
+                        db_manager.release_connection(conn)
 
         # Pull remote categories to local
         for cat_name, cat_data in remote_cats.items():
@@ -103,53 +120,96 @@ def reconcile_and_sync() -> Dict[str, Any]:
                 )
         local_conn.commit()
 
-        # ---------------- 3. Query Local Transactions ----------------
+        # ---------------- 3. Query Local Transactions & Build Local Merkle Tree ----------------
         local_c.execute('SELECT id, date, description, amount, category_name, account_name, notes, receipt_path FROM transactions')
         local_rows = local_c.fetchall()
-        
+
         local_tx_map = {}
+        local_merkle_records = []
         for r in local_rows:
             key = _build_tx_identity_key(r[1], r[2], r[3], r[5])
-            local_tx_map[key] = {
-                'id': r[0],
-                'date': _normalize_date_str(r[1]),
-                'description': r[2],
-                'amount': float(r[3]),
-                'category_name': r[4],
-                'account_name': r[5] or 'Main Account',
-                'notes': r[6] or '',
-                'receipt_path': r[7] or ''
-            }
+            if key not in local_tx_map:
+                d_norm = _normalize_date_str(r[1])
+                acct_str = r[5] or 'Main Account'
+                notes_str = r[6] or ''
+                receipt_str = r[7] or ''
+                local_tx_map[key] = {
+                    'id': r[0],
+                    'date': d_norm,
+                    'description': r[2],
+                    'amount': float(r[3]),
+                    'category_name': r[4],
+                    'account_name': acct_str,
+                    'notes': notes_str,
+                    'receipt_path': receipt_str,
+                    'bucket': _bucket_key_for_tx(d_norm, acct_str),
+                }
+                local_merkle_records.append((key[0], key[1], key[2], key[3], notes_str, receipt_str))
 
-        # ---------------- 4. Query Remote Transactions (Map-Reduce across Shards) ----------------
+        local_tree = MerkleTree.from_records(local_merkle_records)
+
+        # ---------------- 4. Query Remote Transactions & Build Remote Merkle Tree ----------------
         remote_tx_map = {}
+        remote_merkle_records = []
         for url in db_manager.SHARD_URLS:
+            conn = None
             try:
                 conn = db_manager.get_connection_for_url(url)
                 c = conn.cursor()
                 c.execute('SELECT id, date, description, amount, category_name, account_name, notes, receipt_path FROM transactions')
                 for r in c.fetchall():
                     key = _build_tx_identity_key(r[1], r[2], r[3], r[5])
-                    remote_tx_map[key] = {
-                        'id': r[0],
-                        'shard_url': url,
-                        'date': _normalize_date_str(r[1]),
-                        'description': r[2],
-                        'amount': float(r[3]),
-                        'category_name': r[4],
-                        'account_name': r[5] or 'Main Account',
-                        'notes': r[6] or '',
-                        'receipt_path': r[7] or ''
-                    }
-                conn.close()
+                    if key not in remote_tx_map:
+                        d_norm = _normalize_date_str(r[1])
+                        acct_str = r[5] or 'Main Account'
+                        notes_str = r[6] or ''
+                        receipt_str = r[7] or ''
+                        remote_tx_map[key] = {
+                            'id': r[0],
+                            'shard_url': url,
+                            'date': d_norm,
+                            'description': r[2],
+                            'amount': float(r[3]),
+                            'category_name': r[4],
+                            'account_name': acct_str,
+                            'notes': notes_str,
+                            'receipt_path': receipt_str,
+                            'bucket': _bucket_key_for_tx(d_norm, acct_str),
+                        }
+                        remote_merkle_records.append((key[0], key[1], key[2], key[3], notes_str, receipt_str))
             except Exception as e:
                 logger.warning(f"Could not read from shard {url} during reconciliation: {e}")
+            finally:
+                db_manager.release_connection(conn)
 
-        # ---------------- 5. Forward Replay: Push Local -> Remote ----------------
+        remote_tree = MerkleTree.from_records(remote_merkle_records)
+
+        # ---------------- 5. Merkle Tree Anti-Entropy Diff ----------------
+        divergent_buckets = local_tree.diff_buckets(remote_tree)
+
+        if not divergent_buckets:
+            # O(1) Merkle Root Match: Zero divergent buckets!
+            return {
+                "status": "success",
+                "message": "Merkle Tree root hashes match! Stores are already 100% converged.",
+                "pushed_to_remote": 0,
+                "pulled_to_local": 0,
+                "conflicts_resolved": 0,
+                "divergent_buckets_synced": 0,
+                "merkle_root_hash": local_tree.root_hash,
+                "total_unified_transactions": len(remote_tx_map),
+                "synced": True,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # ---------------- 6. Forward Replay on Divergent Buckets: Push Local -> Remote ----------------
         for key, local_tx in local_tx_map.items():
+            if local_tx['bucket'] not in divergent_buckets:
+                continue
+
             if key not in remote_tx_map:
-                # Local transaction missing on remote -> Route to target shard
                 target_url = db_manager.shard_ring.get_node(local_tx['account_name'])
+                conn = None
                 try:
                     conn = db_manager.get_connection_for_url(target_url)
                     c = conn.cursor()
@@ -158,16 +218,16 @@ def reconcile_and_sync() -> Dict[str, Any]:
                            VALUES (%s, %s, %s, %s, %s, %s, %s)'''
                     db_manager.execute_adapted_query(
                         c, insert_sql,
-                        (local_tx['date'], local_tx['description'], local_tx['amount'], 
+                        (local_tx['date'], local_tx['description'], local_tx['amount'],
                          local_tx['category_name'], local_tx['account_name'], local_tx['notes'], local_tx['receipt_path'])
                     )
                     conn.commit()
-                    conn.close()
                     pushed_to_remote += 1
                 except Exception as e:
                     logger.error(f"Failed to push local tx {key} to shard {target_url}: {e}")
+                finally:
+                    db_manager.release_connection(conn)
             else:
-                # Exists on both sides -> Check for field updates / conflict resolution
                 remote_tx = remote_tx_map[key]
                 needs_remote_update = False
                 new_notes = remote_tx['notes']
@@ -181,31 +241,34 @@ def reconcile_and_sync() -> Dict[str, Any]:
                     needs_remote_update = True
 
                 if needs_remote_update:
+                    conn = None
                     try:
                         conn = db_manager.get_connection_for_url(remote_tx['shard_url'])
                         c = conn.cursor()
                         update_sql = 'UPDATE transactions SET notes=%s, receipt_path=%s WHERE id=%s'
                         db_manager.execute_adapted_query(c, update_sql, (new_notes, new_receipt, remote_tx['id']))
                         conn.commit()
-                        conn.close()
                         conflicts_resolved += 1
                     except Exception as e:
                         logger.error(f"Failed updating remote transaction during conflict resolution: {e}")
+                    finally:
+                        db_manager.release_connection(conn)
 
-        # ---------------- 6. Catch-up Replication: Pull Remote -> Local ----------------
+        # ---------------- 7. Catch-up Replication on Divergent Buckets: Pull Remote -> Local ----------------
         for key, remote_tx in remote_tx_map.items():
+            if remote_tx['bucket'] not in divergent_buckets:
+                continue
+
             if key not in local_tx_map:
-                # Remote transaction missing locally -> Insert into local SQLite
                 local_c.execute(
                     '''INSERT INTO transactions 
                        (date, description, amount, category_name, account_name, notes, receipt_path) 
                        VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                    (remote_tx['date'], remote_tx['description'], remote_tx['amount'], 
+                    (remote_tx['date'], remote_tx['description'], remote_tx['amount'],
                      remote_tx['category_name'], remote_tx['account_name'], remote_tx['notes'], remote_tx['receipt_path'])
                 )
                 pulled_to_local += 1
             else:
-                # If remote has notes/receipt and local does not, propagate to local
                 local_tx = local_tx_map[key]
                 needs_local_update = False
                 new_notes = local_tx['notes']
@@ -233,17 +296,19 @@ def reconcile_and_sync() -> Dict[str, Any]:
     total_unified = len(remote_tx_map) + pushed_to_remote
 
     logger.info(
-        f"Reconciliation completed successfully: "
+        f"Merkle Reconciliation completed: "
         f"pushed={pushed_to_remote}, pulled={pulled_to_local}, "
-        f"conflicts_resolved={conflicts_resolved}, total_unified={total_unified}"
+        f"conflicts_resolved={conflicts_resolved}, divergent_buckets={len(divergent_buckets)}, total_unified={total_unified}"
     )
 
     return {
         "status": "success",
-        "message": "Bidirectional reconciliation converged local and remote datasets.",
+        "message": "Bidirectional Merkle Tree reconciliation converged local and remote datasets.",
         "pushed_to_remote": pushed_to_remote,
         "pulled_to_local": pulled_to_local,
         "conflicts_resolved": conflicts_resolved,
+        "divergent_buckets_synced": len(divergent_buckets),
+        "merkle_root_hash": local_tree.root_hash,
         "total_unified_transactions": total_unified,
         "synced": True,
         "timestamp": datetime.now().isoformat()

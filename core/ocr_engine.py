@@ -96,13 +96,25 @@ def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
 
 def extract_text_from_image(image_input) -> Tuple[str, str]:
     """
-    Extracts text from an image (file path or PIL Image).
+    Extracts text from an image or PDF (file path or PIL Image).
     Returns (extracted_text, engine_used).
     """
     img = None
     if isinstance(image_input, str):
         if not os.path.exists(image_input):
             raise FileNotFoundError(f"Image file not found: {image_input}")
+        if image_input.lower().endswith(".pdf"):
+            try:
+                import pdfplumber
+                with pdfplumber.open(image_input) as pdf:
+                    pages_text = [p.extract_text() or "" for p in pdf.pages]
+                combined = "\n".join(t for t in pages_text if t.strip()).strip()
+                if combined:
+                    return combined, "pdfplumber_text"
+            except Exception:
+                pass
+            pdf_ocr_text = extract_text_from_pdf_ocr(image_input)
+            return pdf_ocr_text or "Scanned PDF Receipt", "pdf_ocr"
         img = Image.open(image_input)
     elif isinstance(image_input, Image.Image):
         img = image_input
