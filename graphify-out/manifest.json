@@ -36,9 +36,9 @@
     "semantic_hash": ""
   },
   "core/ocr_engine.py": {
-    "mtime": 1794216978.0159402,
-    "seen": 1794217065.7117395,
-    "ast_hash": "14dcde83edd16b8034bd8a062809ac14",
+    "mtime": 1794217169.663674,
+    "seen": 1794217189.115659,
+    "ast_hash": "6a2b3709fc34c03bc73a9cb1b2789c27",
     "semantic_hash": ""
   },
   "core/payment_categorizer.py": {
@@ -96,8 +96,8 @@
     "semantic_hash": ""
   },
   "main.py": {
-    "mtime": 1794216893.0915813,
-    "seen": 1794217065.71175,
+    "mtime": 1794217077.875724,
+    "seen": 1794217189.1156704,
     "ast_hash": "464cc6bb71bddfe25a9c84a2ed4f52db",
     "semantic_hash": ""
   },

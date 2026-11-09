@@ -113,7 +113,8 @@ def extract_text_from_image(image_input) -> Tuple[str, str]:
                     return combined, "pdfplumber_text"
             except Exception:
                 pass
-            pdf_ocr_text = extract_text_from_pdf_ocr(image_input)
+            pdf_ocr_pages = extract_text_from_pdf_pages_ocr(image_input)
+            pdf_ocr_text = "\n".join(t for t in pdf_ocr_pages if t.strip()).strip()
             return pdf_ocr_text or "Scanned PDF Receipt", "pdf_ocr"
         img = Image.open(image_input)
     elif isinstance(image_input, Image.Image):

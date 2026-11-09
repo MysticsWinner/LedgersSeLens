@@ -1,7 +1,7 @@
 # Graph Report - LedgersSeLens  (2026-11-09)
 
 ## Corpus Check
-- 48 files · ~29,041 words
+- 48 files · ~29,050 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 4 file(s) not represented in the graph (top: (none) 2, .css 1, .conf 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `76577a67`
+- Built from commit: `fa6a28b2`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
